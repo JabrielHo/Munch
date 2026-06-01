@@ -4,10 +4,12 @@ import Room from "./pages/Room";
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/" element={<Home />} />
-      <Route path="/r/:code" element={<Room />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <main>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/r/:code" element={<Room />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </main>
   );
 }

@@ -14,7 +14,7 @@
   --hairline: #efe2ce;
 
   /* — Semantic accents — */
-  --primary: #ff5a3c; /* tomato — go / CTA */
+  --primary: #ff5a3c; /* tomato — go / CTA (pairs with --ink text: 5.1:1) */
   --primary-press: #d8401f;
   --yolk: #ffc542; /* votes */
   --yolk-press: #e0a41f;
@@ -124,7 +124,7 @@ input {
   font-weight: 600;
   font-size: 17px;
   padding: 15px 20px;
-  color: #fff;
+  color: var(--ink); /* dark ink on tomato = 5.1:1 (white would be 3.1:1) */
   text-decoration: none;
   background: var(--primary);
   box-shadow: var(--shadow-btn-primary);
@@ -154,6 +154,7 @@ input {
 }
 .btn--grape {
   background: var(--grape);
+  color: #fff; /* white reads on grape; tomato's ink override doesn't apply here */
   box-shadow: var(--shadow-btn-grape);
 }
 .btn--grape:active:not(:disabled) {
@@ -177,7 +178,7 @@ input {
   border: none;
   border-radius: var(--r-fab);
   background: var(--primary);
-  color: #fff;
+  color: var(--ink); /* dark ink on tomato = 5.1:1 */
   box-shadow: var(--shadow-btn-primary);
   font-size: 22px;
   display: grid;
@@ -245,7 +246,7 @@ input {
   font-family: var(--font-display);
   font-weight: 700;
   font-size: 52px;
-  color: var(--primary);
+  color: #ec4a28; /* a hair deeper than --primary so the big text clears 3:1 on --bg */
   letter-spacing: -0.01em;
   line-height: 1;
 }

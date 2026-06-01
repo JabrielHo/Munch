@@ -1,0 +1,3 @@
+# https://munch.jabrielho.com
+User-agent: *
+Allow: /
