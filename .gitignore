@@ -1,0 +1,33 @@
+node_modules
+dist
+dist-ssr
+*.tsbuildinfo
+
+# Local env files (Convex writes CONVEX_DEPLOYMENT + VITE_CONVEX_URL here)
+.env.local
+*.local
+
+# Generated auth keypair; regenerate per deployment
+.auth-keys
+
+# Local verification screenshots
+.e2e
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+.convex
+
+convex/_generated
