@@ -328,7 +328,7 @@ input {
   color: var(--ink);
   font-weight: 700;
 }
-.recent-item span:last-child {
+.recent-item span[aria-hidden] {
   color: var(--grape);
   font-weight: 800;
 }
@@ -364,7 +364,6 @@ input {
   color: var(--ink-soft);
   font-weight: 700;
   font-size: 13px;
-  text-decoration: underline;
   padding: 4px;
 }
 

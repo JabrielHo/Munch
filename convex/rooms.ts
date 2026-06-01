@@ -46,9 +46,9 @@ function randomCode(): string {
   // Largest whole multiple of the alphabet size that fits in a byte; bytes at or
   // above it fall in a partial bucket and are rejected to keep the draw uniform.
   const limit = 256 - (256 % CODE_ALPHABET.length);
+  const bytes = new Uint8Array(CODE_LEN); // reused each refill — getRandomValues overwrites it
   let code = "";
   while (code.length < CODE_LEN) {
-    const bytes = new Uint8Array(CODE_LEN);
     crypto.getRandomValues(bytes);
     for (const b of bytes) {
       if (b < limit && code.length < CODE_LEN) {
