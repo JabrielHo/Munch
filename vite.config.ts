@@ -1,24 +1,10 @@
-import { defineConfig, loadEnv, type Plugin } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
-import { copyFileSync } from "node:fs";
 
-// GitHub Pages has no SPA rewrite rules, so a hard refresh on a deep link like
-// /r/ABC123 would 404. Serving a copy of index.html as 404.html boots the app
-// anyway, and React Router then renders the right screen from the URL.
-function githubPagesSpaFallback(): Plugin {
-  return {
-    name: "github-pages-spa-fallback",
-    closeBundle() {
-      try {
-        copyFileSync("dist/index.html", "dist/404.html");
-      } catch {
-        /* index.html wasn't emitted (non-build command) — nothing to copy */
-      }
-    },
-  };
-}
-
+// https://vite.dev/config/
 export default defineConfig(({ mode }) => {
+  // Fail the production build loudly if the Convex URL isn't wired up, instead
+  // of shipping a bundle that crashes to a blank screen for every visitor.
   const env = loadEnv(mode, process.cwd(), "");
   if (mode === "production" && !env.VITE_CONVEX_URL) {
     throw new Error(
@@ -29,7 +15,7 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
-    plugins: [react(), githubPagesSpaFallback()],
+    plugins: [react()],
     server: { port: 5173 },
   };
 });
