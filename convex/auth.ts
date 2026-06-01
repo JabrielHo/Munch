@@ -2,9 +2,21 @@ import { Password } from "@convex-dev/auth/providers/Password";
 import { convexAuth } from "@convex-dev/auth/server";
 import { ConvexError } from "convex/values";
 import { rateLimiter } from "./rateLimits";
+import { hostNameOr } from "./lib";
 
 type Authorize = (params: Record<string, unknown>, ctx: unknown) => Promise<unknown>;
-const basePassword = Password();
+// Capture the host's display name onto their ACCOUNT at sign-up: Convex Auth
+// writes this profile onto the `users` row (only on the signUp flow — signIn
+// doesn't overwrite it). The name then follows the host to any browser they
+// sign in on, instead of living in per-device localStorage.
+const basePassword = Password({
+  profile(params) {
+    return {
+      email: params.email as string,
+      name: hostNameOr(params.name),
+    };
+  },
+});
 const baseOptions = (basePassword as unknown as { options?: { authorize?: Authorize } }).options;
 const realAuthorize = baseOptions?.authorize;
 // Fail LOUD, not open: if a @convex-dev/auth bump moves the internal authorize,

@@ -1,9 +1,10 @@
 import { useState } from "react";
-import type { Doc, Id } from "../../convex/_generated/dataModel";
+import type { Id } from "../../convex/_generated/dataModel";
 import { tileColor } from "../lib/ui";
+import type { PublicOption } from "../lib/types";
 
 interface Props {
-  option: Doc<"options">;
+  option: PublicOption;
   mine: boolean;
   voted: boolean;
   removable: boolean;

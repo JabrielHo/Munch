@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
-import type { Doc } from "../../convex/_generated/dataModel";
 import { usePrefersReducedMotion } from "../lib/hooks";
-import type { PublicRoom } from "../lib/types";
+import type { PublicRoom, PublicOption } from "../lib/types";
 import { SpinWheel, type WheelItem } from "./SpinWheel";
 import { ResultView } from "./ResultView";
 
 interface Props {
   room: PublicRoom;
-  options: Doc<"options">[];
+  options: PublicOption[];
   viewerIsHost: boolean;
 }
 
@@ -45,7 +44,7 @@ export function DecideView({ room, options, viewerIsHost }: Props) {
     const byId = new Map(options.map((o) => [o._id, o]));
     let items: WheelItem[] = (room.wheelOptionIds ?? [])
       .map((id) => byId.get(id))
-      .filter((o): o is Doc<"options"> => Boolean(o))
+      .filter((o): o is PublicOption => Boolean(o))
       .map((o) => ({ id: o._id, emoji: o.emoji }));
     if (items.length === 0) {
       items = options.slice(0, 8).map((o) => ({ id: o._id, emoji: o.emoji }));

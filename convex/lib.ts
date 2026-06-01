@@ -12,6 +12,13 @@ export function clean(s: string, max: number): string {
   return s.replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+/** The host's account display name, canonicalized, with a friendly fallback —
+ *  so a blank/missing name (e.g. an account created before names were stored)
+ *  never renders empty or blocks presence/voting. */
+export function hostNameOr(name: unknown): string {
+  return clean(String(name ?? ""), MAX_NAME) || "Host";
+}
+
 /** Look up a room by its (case-insensitive) share code. */
 export async function roomByCode(ctx: QueryCtx | MutationCtx, code: string) {
   return ctx.db

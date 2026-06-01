@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useConvex } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { api } from "../../convex/_generated/api";
-import { CLIENT_ID } from "../lib/identity";
+import { CLIENT_ID, MAX_NAME, useDisplayName } from "../lib/identity";
 import { humanError } from "../lib/ui";
 
 /**
@@ -13,7 +13,11 @@ import { humanError } from "../lib/ui";
 export function HostSignIn() {
   const { signIn } = useAuthActions();
   const convex = useConvex();
+  // Prefill the name from any device name they used as a guest, so creating an
+  // account keeps their name. From here on it lives on the account.
+  const [deviceName] = useDisplayName();
   const [flow, setFlow] = useState<"signUp" | "signIn">("signUp");
+  const [name, setName] = useState(deviceName);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -22,6 +26,11 @@ export function HostSignIn() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     const cleanEmail = email.trim();
+    const cleanedName = name.trim();
+    if (flow === "signUp" && !cleanedName) {
+      setError("Add your name so the squad knows who's hosting.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -44,7 +53,8 @@ export function HostSignIn() {
           return;
         }
       }
-      await signIn("password", { email: cleanEmail, password, flow });
+      // `name` is only consumed by the signUp profile; signIn ignores it.
+      await signIn("password", { email: cleanEmail, password, flow, name: cleanedName });
     } catch (err) {
       const msg = humanError(err);
       setError(
@@ -67,10 +77,26 @@ export function HostSignIn() {
       </p>
       {error && <div className="signin-error">{error}</div>}
       <form className="stack" onSubmit={submit}>
+        {flow === "signUp" && (
+          <input
+            className="input"
+            type="text"
+            id="name"
+            name="name"
+            autoComplete="name"
+            placeholder="your name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={MAX_NAME}
+            required
+          />
+        )}
         <input
           className="input"
           type="email"
-          autoComplete="email"
+          id="email"
+          name="email"
+          autoComplete="username"
           placeholder="you@email.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
@@ -79,6 +105,8 @@ export function HostSignIn() {
         <input
           className="input"
           type="password"
+          id="password"
+          name="password"
           autoComplete={flow === "signUp" ? "new-password" : "current-password"}
           placeholder="password (8+ characters)"
           value={password}

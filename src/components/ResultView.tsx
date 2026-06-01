@@ -1,12 +1,11 @@
 import { Link } from "react-router-dom";
-import type { Doc } from "../../convex/_generated/dataModel";
 import { mapsUrl, tileColor } from "../lib/ui";
-import type { PublicRoom } from "../lib/types";
+import type { PublicRoom, PublicOption } from "../lib/types";
 import { Confetti } from "./Confetti";
 
 interface Props {
   room: PublicRoom;
-  options: Doc<"options">[];
+  options: PublicOption[];
   reducedMotion: boolean;
 }
 

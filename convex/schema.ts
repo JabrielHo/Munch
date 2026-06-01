@@ -41,8 +41,11 @@ export default defineSchema({
     emoji: v.string(),
     cuisine: v.optional(v.string()),
     suggestedSpot: v.optional(v.string()),
-    addedByName: v.string(),
+    addedByName: v.string(), // snapshot at add time; the live name wins if addedByUserId is set
     addedByClientId: v.string(),
+    // Set when an account holder (the host) added it — lets getRoom resolve the
+    // CURRENT account name so a rename shows up on options they already added.
+    addedByUserId: v.optional(v.id("users")),
     voteCount: v.number(), // denormalized for cheap sorting/rendering
     createdAt: v.number(),
   }).index("by_room", ["roomId"]),

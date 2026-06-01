@@ -1,6 +1,5 @@
 import { Link } from "react-router-dom";
-import type { Doc } from "../../convex/_generated/dataModel";
-import type { PublicRoom } from "../lib/types";
+import type { PublicRoom, PublicOption } from "../lib/types";
 import { tileColor } from "../lib/ui";
 
 /**
@@ -8,7 +7,7 @@ import { tileColor } from "../lib/ui";
  * visible so the host (and friends) can look back at what was decided, but
  * nothing can change and there's no reopening.
  */
-export function ClosedView({ room, options }: { room: PublicRoom; options: Doc<"options">[] }) {
+export function ClosedView({ room, options }: { room: PublicRoom; options: PublicOption[] }) {
   const winner = options.find((o) => o._id === room.winnerOptionId);
 
   return (

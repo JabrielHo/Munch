@@ -63,8 +63,9 @@ npm run dev
 ```
 
 Open the printed URL (e.g. http://localhost:5173). Click **Start a room**,
-create a host account (email + password), and you're in. Friends only ever need
-the link — there's no code to type and no account to make.
+create a host account (name + email + password), and you're in. Your name lives
+on the account, so it follows you to any browser you sign in on. Friends only
+ever need the link — there's no code to type and no account to make.
 
 ---
 
@@ -145,7 +146,7 @@ src/
   pages/           Home, Room
   components/       CollectView, OptionRow, SpinWheel, DecideView, ResultView, …
   lib/             identity (clientId + name), hooks (clipboard, reduced-motion), ui
-scripts/           generate-auth-keys.mjs, e2e.mjs (Playwright smoke test)
+scripts/           generate-auth-keys.mjs
 ```
 
 ### Scripts

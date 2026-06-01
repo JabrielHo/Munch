@@ -2,16 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import type { Doc, Id } from "../../convex/_generated/dataModel";
+import type { Id } from "../../convex/_generated/dataModel";
 import { CLIENT_ID, MAX_TEXT } from "../lib/identity";
 import { useClipboard } from "../lib/hooks";
 import { avatarColor, humanError, shareUrl } from "../lib/ui";
-import type { PublicRoom } from "../lib/types";
+import type { PublicRoom, PublicOption } from "../lib/types";
 import { OptionRow } from "./OptionRow";
 
 interface Props {
   room: PublicRoom;
-  options: Doc<"options">[];
+  options: PublicOption[];
   viewerIsHost: boolean;
   presence: { count: number; names: string[] } | undefined;
   votedIds: Set<string>;
@@ -108,9 +108,9 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
             <OptionRow
               key={o._id}
               option={o}
-              mine={o.addedByClientId === CLIENT_ID}
+              mine={o.mine}
               voted={votedIds.has(o._id)}
-              removable={o.addedByClientId === CLIENT_ID || viewerIsHost}
+              removable={o.mine || viewerIsHost}
               onVote={onVote}
               onRemove={onRemove}
             />

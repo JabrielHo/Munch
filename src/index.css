@@ -596,7 +596,7 @@ input {
   color: var(--ink-soft);
   font-size: 16px;
   padding: 2px 6px;
-  align-self: flex-start;
+  align-self: center;
 }
 
 /* vote button */

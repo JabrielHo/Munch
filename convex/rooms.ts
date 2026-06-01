@@ -3,7 +3,7 @@ import { mutation, query, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { classify } from "./foods";
-import { MAX_NAME, MAX_TITLE, MAX_TEXT, clean, roomByCode, requireRoom, requireHost } from "./lib";
+import { MAX_NAME, MAX_TITLE, MAX_TEXT, clean, hostNameOr, roomByCode, requireRoom, requireHost } from "./lib";
 
 // —— Tunables ——
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O/1/I/L ambiguity
@@ -77,19 +77,43 @@ async function decide(
 
 /** Everything the room screen needs: room state + options sorted by votes. */
 export const getRoom = query({
-  args: { code: v.string() },
-  handler: async (ctx, { code }) => {
+  args: { code: v.string(), clientId: v.string() },
+  handler: async (ctx, { code, clientId }) => {
     const room = await roomByCode(ctx, code);
     if (!room) return null;
-    const options = await ctx.db
+    const rows = await ctx.db
       .query("options")
       .withIndex("by_room", (q) => q.eq("roomId", room._id))
       .collect();
-    options.sort((a, b) => b.voteCount - a.voteCount || a.createdAt - b.createdAt);
+    rows.sort((a, b) => b.voteCount - a.voteCount || a.createdAt - b.createdAt);
     const userId = await getAuthUserId(ctx);
     const viewerIsHost = userId !== null && userId === room.hostUserId;
-    // Don't ship the host's internal account id to anonymous participants.
-    const { hostUserId: _hostUserId, ...publicRoom } = room;
+
+    // Resolve account holders' CURRENT names once, so a rename is reflected on
+    // everything they own — not just rows written after the rename.
+    const accountIds = new Set<Id<"users">>([room.hostUserId]);
+    for (const r of rows) if (r.addedByUserId) accountIds.add(r.addedByUserId);
+    const liveName = new Map<Id<"users">, string>();
+    await Promise.all(
+      [...accountIds].map(async (id) => {
+        const u = await ctx.db.get(id);
+        if (u?.name) liveName.set(id, u.name);
+      }),
+    );
+
+    // addedByClientId is the ONLY thing gating removeOption, so it must never
+    // ship to clients — exposing it would let any participant read another's id
+    // and delete their option. Resolve "is this mine?" here and drop the raw ids.
+    const options = rows.map(({ addedByClientId, addedByUserId, ...rest }) => ({
+      ...rest,
+      // Account holders show their live name; guests keep their add-time snapshot.
+      addedByName: (addedByUserId && liveName.get(addedByUserId)) || rest.addedByName,
+      mine: addedByClientId === clientId,
+    }));
+    // Don't ship the host's internal account id to anonymous participants; show
+    // the host's live account name as the room's host label.
+    const { hostUserId, ...roomFields } = room;
+    const publicRoom = { ...roomFields, hostName: liveName.get(hostUserId) || room.hostName };
     return { room: publicRoom, options, viewerIsHost };
   },
 });
@@ -131,10 +155,13 @@ export const myRooms = query({
 
 /** Host-only: spin up a fresh room and return its shareable code. */
 export const createRoom = mutation({
-  args: { title: v.string(), hostName: v.string() },
-  handler: async (ctx, { title, hostName }) => {
+  args: { title: v.string() },
+  handler: async (ctx, { title }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new ConvexError("Please sign in to start a room.");
+    // The host's name is owned by their account, not passed by the client.
+    const user = await ctx.db.get(userId);
+    const hostName = hostNameOr(user?.name);
 
     let code = "";
     for (let tries = 0; tries < 12; tries++) {
@@ -150,7 +177,7 @@ export const createRoom = mutation({
       code,
       title: clean(title, MAX_TITLE) || randomRoomName(),
       hostUserId: userId,
-      hostName: clean(hostName, MAX_NAME) || "Host",
+      hostName,
       phase: "collecting",
       createdAt: Date.now(),
     });
@@ -172,6 +199,9 @@ export const addOption = mutation({
     if (room.phase !== "collecting") {
       throw new ConvexError("The decision's already happening — hang tight!");
     }
+    // If the adder is signed in (the host), tag the option with their account so
+    // getRoom can show their CURRENT name even after a rename.
+    const addedByUserId = await getAuthUserId(ctx);
     const who = clean(name, MAX_NAME);
     if (!who) throw new ConvexError("Add your name first.");
     const value = clean(text, MAX_TEXT);
@@ -200,6 +230,7 @@ export const addOption = mutation({
       ...(c.suggestedSpot ? { suggestedSpot: c.suggestedSpot } : {}),
       addedByName: who,
       addedByClientId: clientId,
+      ...(addedByUserId ? { addedByUserId } : {}),
       voteCount: 0,
       createdAt: Date.now(),
     });
@@ -215,6 +246,7 @@ export const removeOption = mutation({
     if (!option) return;
     const room = await ctx.db.get(option.roomId);
     if (!room) return;
+    if (room.closedAt) throw new ConvexError("This room is closed.");
     if (room.phase !== "collecting") {
       throw new ConvexError("Can't change options mid-decision.");
     }
