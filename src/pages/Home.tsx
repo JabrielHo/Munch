@@ -54,6 +54,17 @@ export default function Home() {
     }
   }
 
+  const booting = resolving || (isAuthenticated && recent === undefined);
+  if (booting) {
+    return (
+      <div className="screen">
+        <div className="loading">
+          <div className="spinner" />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="screen home">
       <div className="home-top">
