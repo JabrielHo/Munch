@@ -8,6 +8,8 @@ import { DecideView } from "../components/DecideView";
 import { ClosedView } from "../components/ClosedView";
 import { NameGate } from "../components/NameGate";
 
+const HEARTBEAT_MS = 1_500;
+
 export default function Room() {
   const { code = "" } = useParams();
 
@@ -21,12 +23,13 @@ export default function Room() {
   const heartbeat = useMutation(api.presence.heartbeat);
   const leave = useMutation(api.presence.leave);
 
-  // Presence: heartbeat ~every 1s while the tab is visible, and drop INSTANTLY
-  // when it's hidden (tab/app switch, phone lock) or closed. `visibilitychange`
-  // → hidden is the reliable cross-platform "going away" signal — pagehide and
-  // beforeunload don't fire dependably on mobile — with `pagehide` as a
-  // desktop-close backstop. sendBeacon is guaranteed to flush during teardown.
-  // The heartbeat pauses while hidden so it can't re-add a guest who just left.
+  // Presence: heartbeat every HEARTBEAT_MS. We KEEP beating even while the tab is
+  // hidden, so tabbing/switching away does NOT drop you from "here" — a
+  // backgrounded tab still heartbeats (~1/s, which the presence window
+  // tolerates). Only an actual page close removes you: `pagehide` fires a
+  // sendBeacon that flushes during teardown (and if the beacon is dropped on a
+  // full window close, the short server-side window catches it). In-app
+  // navigation is handled by the separate unmount effect below.
   useEffect(() => {
     if (!code) return;
     // The Convex HTTP-actions origin. Set explicitly in local dev; in a prod
@@ -34,21 +37,12 @@ export default function Room() {
     const siteUrl =
       import.meta.env.VITE_CONVEX_SITE_URL ||
       import.meta.env.VITE_CONVEX_URL.replace(".convex.cloud", ".convex.site");
-    let alive = true;
     const beat = () => {
-      if (alive && document.visibilityState === "visible") {
-        void heartbeat({ code, clientId: CLIENT_ID, name: name || "Guest" }).catch(
-          () => {},
-        );
-      }
+      void heartbeat({ code, clientId: CLIENT_ID, name: name || "Guest" }).catch(
+        () => {},
+      );
     };
-    const leaveNow = () => {
-      // Primary: a mutation over the still-open socket. This is what fires when
-      // the tab is just hidden (you switch to another tab/app, lock the phone),
-      // and it needs no env var, so it works regardless of dev-server state.
-      void leave({ code, clientId: CLIENT_ID }).catch(() => {});
-      // Best-effort backstop for an actual close, where the socket is already
-      // gone (only works if VITE_CONVEX_SITE_URL was set at build time).
+    const leaveOnClose = () => {
       if (siteUrl) {
         navigator.sendBeacon(
           `${siteUrl}/leave`,
@@ -56,22 +50,15 @@ export default function Room() {
         );
       }
     };
-    const onVisibility = () => {
-      if (document.visibilityState === "hidden") leaveNow();
-      else beat(); // re-announce the moment they come back
-    };
 
     beat();
-    const id = setInterval(beat, 1_000);
-    document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("pagehide", leaveNow);
+    const id = setInterval(beat, HEARTBEAT_MS);
+    window.addEventListener("pagehide", leaveOnClose);
     return () => {
-      alive = false;
       clearInterval(id);
-      document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("pagehide", leaveNow);
+      window.removeEventListener("pagehide", leaveOnClose);
     };
-  }, [code, name, heartbeat, leave]);
+  }, [code, name, heartbeat]);
 
   // In-app navigation away (React unmount) → leave over the open socket, instant.
   // Separate from the heartbeat effect so it doesn't fire on name changes.

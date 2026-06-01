@@ -3,8 +3,6 @@ dist
 dist-ssr
 *.tsbuildinfo
 
-package-lock.json
-
 # Local env files (Convex writes CONVEX_DEPLOYMENT + VITE_CONVEX_URL here)
 .env.local
 *.local
@@ -31,5 +29,3 @@ logs
 npm-debug.log*
 
 .convex
-
-convex/_generated
