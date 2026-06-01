@@ -328,10 +328,9 @@ input {
   color: var(--ink);
   font-weight: 700;
 }
-.recent-item code {
-  font-family: var(--font-display);
-  letter-spacing: 0.12em;
+.recent-item span:last-child {
   color: var(--grape);
+  font-weight: 800;
 }
 
 /* ——— Sign in ——— */

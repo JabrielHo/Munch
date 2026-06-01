@@ -6,8 +6,13 @@ import { classify } from "./foods";
 import { MAX_NAME, MAX_TITLE, MAX_TEXT, clean, hostNameOr, roomByCode, requireRoom, requireHost } from "./lib";
 
 // —— Tunables ——
-const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O/1/I/L ambiguity
-const CODE_LEN = 4;
+// The room code lives in the shareable link and is the ONLY thing guarding a
+// room (there's no join-by-code form), so it must be UNGUESSABLE — a CSPRNG
+// token, not a short human code. 16 chars over a 31-char alphabet ≈ 79 bits of
+// entropy (~7e23 combinations), so the code space can't be enumerated even
+// without rate limiting on the lookup.
+const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // 31 chars, no 0/O/1/I/L
+const CODE_LEN = 16;
 const MAX_OPTIONS_PER_ROOM = 60;
 const MAX_OPTIONS_PER_CLIENT = 25;
 const WHEEL_MAX = 8; // wheel only renders the top N for legible wedges
@@ -34,12 +39,24 @@ const ROOM_NAMES = [
 ];
 
 // —— Helpers ——
+/** A cryptographically-random, unguessable room code. Draws from the CSPRNG
+ *  (`crypto.getRandomValues`, not `Math.random`) and uses rejection sampling so
+ *  every alphabet character is equally likely — no modulo bias. */
 function randomCode(): string {
-  let s = "";
-  for (let i = 0; i < CODE_LEN; i++) {
-    s += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+  // Largest whole multiple of the alphabet size that fits in a byte; bytes at or
+  // above it fall in a partial bucket and are rejected to keep the draw uniform.
+  const limit = 256 - (256 % CODE_ALPHABET.length);
+  let code = "";
+  while (code.length < CODE_LEN) {
+    const bytes = new Uint8Array(CODE_LEN);
+    crypto.getRandomValues(bytes);
+    for (const b of bytes) {
+      if (b < limit && code.length < CODE_LEN) {
+        code += CODE_ALPHABET[b % CODE_ALPHABET.length];
+      }
+    }
   }
-  return s;
+  return code;
 }
 
 function randomRoomName(): string {

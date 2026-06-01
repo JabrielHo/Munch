@@ -134,7 +134,7 @@ export default function Home() {
                   {r.title}
                   {r.closedAt ? " · closed" : ""}
                 </span>
-                <code>{r.code}</code>
+                <span aria-hidden>→</span>
               </Link>
             ))}
           </div>
