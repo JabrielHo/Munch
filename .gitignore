@@ -31,5 +31,3 @@ logs
 npm-debug.log*
 
 .convex
-
-convex/_generated
