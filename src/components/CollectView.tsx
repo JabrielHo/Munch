@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
@@ -29,6 +29,21 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
   const [text, setText] = useState("");
   const { copied, copy } = useClipboard();
 
+  // The dock is fixed to the bottom; reserve exactly its height as bottom
+  // padding so the last option is never hidden behind it (the host's dock is
+  // taller, and the "Lock top pick: …" label can wrap). Re-measures on resize.
+  const dockRef = useRef<HTMLDivElement>(null);
+  const [dockHeight, setDockHeight] = useState(0);
+  useEffect(() => {
+    const el = dockRef.current;
+    if (!el) return;
+    const measure = () => setDockHeight(el.offsetHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   function submitAdd(e: React.FormEvent) {
     e.preventDefault();
     const value = text.trim();
@@ -51,7 +66,10 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
   const here = presence?.count ?? 0;
 
   return (
-    <div className="screen room">
+    <div
+      className="screen room"
+      style={{ paddingBottom: dockHeight ? dockHeight + 16 : undefined }}
+    >
       <header className="room-header">
         <div className="room-titlerow">
           <Link to="/" className="room-back" aria-label="Back to menu">
@@ -100,7 +118,7 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
         </div>
       )}
 
-      <div className="dock">
+      <div className="dock" ref={dockRef}>
         <div className="dock-inner">
           <form className="add-bar" onSubmit={submitAdd}>
             <input
