@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
@@ -6,6 +6,35 @@ import { api } from "../../convex/_generated/api";
 import { MAX_NAME, MAX_TITLE, useViewerName } from "../lib/identity";
 import { humanError } from "../lib/ui";
 import { HostSignIn } from "../components/HostSignIn";
+
+type NameEditState = { mode: "idle" | "editing" | "saving"; draft: string };
+type NameEditAction =
+  | { type: "edit"; name: string }
+  | { type: "change"; value: string }
+  | { type: "saving" }
+  | { type: "saved" }
+  | { type: "failed" }
+  | { type: "cancel" };
+
+const NAME_EDIT_IDLE: NameEditState = { mode: "idle", draft: "" };
+
+function nameEditReducer(state: NameEditState, action: NameEditAction): NameEditState {
+  switch (action.type) {
+    case "edit":
+      return { mode: "editing", draft: action.name };
+    case "change":
+      return { ...state, draft: action.value };
+    case "saving":
+      return { ...state, mode: "saving" };
+    case "failed":
+      return { ...state, mode: "editing" };
+    case "saved":
+    case "cancel":
+      return NAME_EDIT_IDLE;
+    default:
+      return state;
+  }
+}
 
 export default function Home() {
   const navigate = useNavigate();
@@ -21,8 +50,14 @@ export default function Home() {
   const [creating, setCreating] = useState(false);
 
   // Inline name editor. Saving writes to the account, so it syncs everywhere.
-  const [nameMode, setNameMode] = useState<"idle" | "editing" | "saving">("idle");
-  const [draftName, setDraftName] = useState("");
+  const [nameEdit, dispatchName] = useReducer(nameEditReducer, NAME_EDIT_IDLE);
+
+  // Move focus into the field when the editor opens (a deliberate user action),
+  // rather than autoFocus which would yank focus on page load.
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (nameEdit.mode === "editing") nameInputRef.current?.focus();
+  }, [nameEdit.mode]);
 
   async function startRoom() {
     if (resolving) return;
@@ -42,15 +77,15 @@ export default function Home() {
   }
 
   async function saveName() {
-    const next = draftName.trim();
+    const next = nameEdit.draft.trim();
     if (!next) return;
-    setNameMode("saving");
+    dispatchName({ type: "saving" });
     try {
       await setMyName({ name: next });
-      setNameMode("idle");
+      dispatchName({ type: "saved" });
     } catch (err) {
       alert(humanError(err));
-      setNameMode("editing");
+      dispatchName({ type: "failed" });
     }
   }
 
@@ -76,27 +111,30 @@ export default function Home() {
         <HostSignIn />
       ) : isAuthenticated ? (
         <div className="stack">
-          {nameMode !== "idle" ? (
+          {nameEdit.mode !== "idle" ? (
             <div className="stack">
               <input
+                ref={nameInputRef}
                 className="input"
+                aria-label="Your name"
                 placeholder="Your name"
-                value={draftName}
-                onChange={(e) => setDraftName(e.target.value)}
+                value={nameEdit.draft}
+                onChange={(e) => dispatchName({ type: "change", value: e.target.value })}
                 maxLength={MAX_NAME}
-                autoFocus
               />
               <div className="host-controls">
                 <button
+                  type="button"
                   className="btn btn--block"
                   onClick={saveName}
-                  disabled={nameMode === "saving" || !draftName.trim()}>
-                  {nameMode === "saving" ? "Saving…" : "Save name"}
+                  disabled={nameEdit.mode === "saving" || !nameEdit.draft.trim()}>
+                  {nameEdit.mode === "saving" ? "Saving…" : "Save name"}
                 </button>
                 <button
+                  type="button"
                   className="btn btn--ghost btn--block"
-                  onClick={() => setNameMode("idle")}
-                  disabled={nameMode === "saving"}>
+                  onClick={() => dispatchName({ type: "cancel" })}
+                  disabled={nameEdit.mode === "saving"}>
                   Cancel
                 </button>
               </div>
@@ -105,32 +143,32 @@ export default function Home() {
             <div className="hosting-as">
               Hosting as <strong>{hostName || "…"}</strong>
               <button
+                type="button"
                 className="linklike"
                 style={{ marginLeft: 8 }}
-                onClick={() => {
-                  setDraftName(hostName);
-                  setNameMode("editing");
-                }}>
+                onClick={() => dispatchName({ type: "edit", name: hostName })}>
                 edit
               </button>
             </div>
           )}
           <input
             className="input"
+            aria-label="Name this round"
             placeholder="Name this round (optional)"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             maxLength={MAX_TITLE}
           />
           <button
+            type="button"
             className="btn btn--block btn--lg"
             onClick={startRoom}
-            disabled={creating || nameMode !== "idle" || !hostName}>
+            disabled={creating || nameEdit.mode !== "idle" || !hostName}>
             {creating ? "Spinning it up…" : "Start a room 🎉"}
           </button>
         </div>
       ) : (
-        <button className="btn btn--block btn--lg" onClick={startRoom}>
+        <button type="button" className="btn btn--block btn--lg" onClick={startRoom}>
           Start a room 🎉
         </button>
       )}
@@ -155,6 +193,7 @@ export default function Home() {
       <div className="home-footer">
         {isAuthenticated ? (
           <button
+            type="button"
             className="linklike"
             onClick={() => {
               setShowSignIn(false);

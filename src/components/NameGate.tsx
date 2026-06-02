@@ -36,6 +36,7 @@ export function NameGate({ room, onSubmit }: { room: PublicRoom; onSubmit: (name
           <input
             ref={inputRef}
             className="input"
+            aria-label="Your name"
             placeholder="your name"
             value={value}
             onChange={(e) => setValue(e.target.value)}

@@ -1,15 +1,22 @@
-import { useState } from "react";
+import { useReducer, useState } from "react";
 import { useConvex } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { api } from "../../convex/_generated/api";
 import { CLIENT_ID, MAX_NAME, useDisplayName } from "../lib/identity";
 import { humanError } from "../lib/ui";
 
-/**
- * Email + password sign-in for the HOST (the only person who needs an account).
- * Convex Auth's Password provider drives this; on success the surrounding
- * <ConvexAuthProvider> flips to authenticated.
- */
+type SignInFields = { name: string; email: string; password: string };
+type SignInFieldAction = { type: "set"; field: keyof SignInFields; value: string };
+
+function fieldsReducer(state: SignInFields, action: SignInFieldAction): SignInFields {
+  switch (action.type) {
+    case "set":
+      return { ...state, [action.field]: action.value };
+    default:
+      return state;
+  }
+}
+
 export function HostSignIn() {
   const { signIn } = useAuthActions();
   const convex = useConvex();
@@ -17,16 +24,18 @@ export function HostSignIn() {
   // account keeps their name. From here on it lives on the account.
   const [deviceName] = useDisplayName();
   const [flow, setFlow] = useState<"signUp" | "signIn">("signUp");
-  const [name, setName] = useState(deviceName);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [fields, dispatchField] = useReducer(fieldsReducer, {
+    name: deviceName,
+    email: "",
+    password: "",
+  });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    const cleanEmail = email.trim();
-    const cleanedName = name.trim();
+    const cleanEmail = fields.email.trim();
+    const cleanedName = fields.name.trim();
     if (flow === "signUp" && !cleanedName) {
       setError("Add your name so the squad knows who's hosting.");
       return;
@@ -54,7 +63,12 @@ export function HostSignIn() {
         }
       }
       // `name` is only consumed by the signUp profile; signIn ignores it.
-      await signIn("password", { email: cleanEmail, password, flow, name: cleanedName });
+      await signIn("password", {
+        email: cleanEmail,
+        password: fields.password,
+        flow,
+        name: cleanedName,
+      });
     } catch (err) {
       const msg = humanError(err);
       setError(
@@ -84,9 +98,10 @@ export function HostSignIn() {
             id="name"
             name="name"
             autoComplete="name"
+            aria-label="Your name"
             placeholder="your name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+            value={fields.name}
+            onChange={(e) => dispatchField({ type: "set", field: "name", value: e.target.value })}
             maxLength={MAX_NAME}
             required
           />
@@ -97,9 +112,10 @@ export function HostSignIn() {
           id="email"
           name="email"
           autoComplete="username"
+          aria-label="Email"
           placeholder="you@email.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          value={fields.email}
+          onChange={(e) => dispatchField({ type: "set", field: "email", value: e.target.value })}
           required
         />
         <input
@@ -108,9 +124,10 @@ export function HostSignIn() {
           id="password"
           name="password"
           autoComplete={flow === "signUp" ? "new-password" : "current-password"}
+          aria-label="Password"
           placeholder="password (8+ characters)"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          value={fields.password}
+          onChange={(e) => dispatchField({ type: "set", field: "password", value: e.target.value })}
           required
         />
         <button className="btn btn--block" type="submit" disabled={busy}>
@@ -118,6 +135,7 @@ export function HostSignIn() {
         </button>
       </form>
       <button
+        type="button"
         className="signin-toggle"
         onClick={() => {
           setError(null);

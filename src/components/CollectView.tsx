@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
@@ -34,7 +34,8 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
   // taller, and the "Lock top pick: …" label can wrap). Re-measures on resize.
   const dockRef = useRef<HTMLDivElement>(null);
   const [dockHeight, setDockHeight] = useState(0);
-  useEffect(() => {
+  
+  useLayoutEffect(() => {
     const el = dockRef.current;
     if (!el) return;
     const measure = () => setDockHeight(el.offsetHeight);
@@ -82,6 +83,7 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
         </div>
         <div className="room-subrow">
           <button
+            type="button"
             className={`share-chip${copied ? " share-chip--done" : ""}`}
             onClick={() => void copy(shareUrl(room.code))}>
             {copied ? "Copied! ✓ paste in the chat" : "Copy link 🔗"}
@@ -101,7 +103,7 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
       </header>
 
       {options.length === 0 ? (
-        <div className="empty">Nobody's added anything yet — go first! 👀</div>
+        <div className="empty">Nobody's added anything yet. Go first! 👀</div>
       ) : (
         <div className="options">
           {options.map((o) => (
@@ -123,6 +125,7 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
           <form className="add-bar" onSubmit={submitAdd}>
             <input
               className="input"
+              aria-label="Add a place or a craving"
               placeholder="Add a place or a craving…"
               value={text}
               onChange={(e) => setText(e.target.value)}
@@ -137,12 +140,14 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
             <>
               <div className="host-controls">
                 <button
+                  type="button"
                   className="btn btn--block"
                   onClick={() => spin({ code: room.code }).catch((err) => alert(humanError(err)))}
                   disabled={options.length === 0}>
                   🎡 Spin the wheel
                 </button>
                 <button
+                  type="button"
                   className="btn btn--ghost btn--block"
                   onClick={() => lockTop({ code: room.code }).catch((err) => alert(humanError(err)))}
                   disabled={options.length === 0}>
@@ -151,6 +156,7 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
               </div>
               <div className="center">
                 <button
+                  type="button"
                   className="linklike"
                   onClick={() => {
                     if (confirm("Close this room for everyone?")) {
@@ -163,7 +169,7 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
             </>
           ) : (
             <div className="guest-waiting">
-              You're in, {name} — the host calls the spin. Keep voting! 🗳️
+              You're in, {name}. The host calls the spin. Keep voting! 🗳️
             </div>
           )}
         </div>

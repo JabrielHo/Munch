@@ -19,11 +19,11 @@ export function hostNameOr(name: unknown): string {
   return clean(String(name ?? ""), MAX_NAME) || "Host";
 }
 
-/** Look up a room by its (case-insensitive) share code. */
+/** Look up a room by its share code — an opaque token, matched exactly. */
 export async function roomByCode(ctx: QueryCtx | MutationCtx, code: string) {
   return ctx.db
     .query("rooms")
-    .withIndex("by_code", (q) => q.eq("code", code.toUpperCase()))
+    .withIndex("by_code", (q) => q.eq("code", code))
     .unique();
 }
 
@@ -38,8 +38,7 @@ export async function requireRoom(ctx: QueryCtx | MutationCtx, code: string) {
 
 /** The single host-authorization chokepoint for host-only mutations. */
 export async function requireHost(ctx: MutationCtx, code: string) {
-  const userId = await getAuthUserId(ctx);
-  const room = await requireRoom(ctx, code);
+  const [userId, room] = await Promise.all([getAuthUserId(ctx), requireRoom(ctx, code)]);
   if (!userId || room.hostUserId !== userId) {
     throw new ConvexError("Only the host can do that.");
   }

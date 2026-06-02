@@ -41,12 +41,17 @@ export function OptionRow({ option, mine, voted, removable, onVote, onRemove }: 
       </div>
 
       {removable && (
-        <button className="option-remove" onClick={() => onRemove(option._id)} aria-label={`Remove ${option.text}`}>
+        <button
+          type="button"
+          className="option-remove"
+          onClick={() => onRemove(option._id)}
+          aria-label={`Remove ${option.text}`}>
           ✕
         </button>
       )}
 
       <button
+        type="button"
         className={`vote-btn${voted ? " vote-btn--on" : ""}`}
         onClick={handleVote}
         aria-pressed={voted}

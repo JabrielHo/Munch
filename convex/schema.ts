@@ -14,7 +14,7 @@ export default defineSchema({
   ...authTables,
 
   rooms: defineTable({
-    code: v.string(), // unguessable CSPRNG token in the share link — the only guard on the room (see CODE_LEN)
+    code: v.string(), // random UUID in the share link — the only guard on the room
     title: v.string(),
     hostUserId: v.id("users"),
     hostName: v.string(),
