@@ -1,5 +1,7 @@
 # Munch 🍜 — _Stop asking. Start eating._
 
+### Check it out [here](https://munch.jabrielho.com)
+
 A dead-simple web app that helps your friends decide where to eat. One person
 starts a room, drops the link in the group chat, everyone adds a place **or** a
 craving (like "ramen" or "chicken rice"), and then the host **spins a wheel** or
