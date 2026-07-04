@@ -1,5 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import {
+  action,
   internalAction,
   internalMutation,
   internalQuery,
@@ -9,7 +10,7 @@ import {
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { MAX_NAME, MAX_TITLE, clean } from "./lib";
+import { MAX_NAME, MAX_TITLE, clean, requireRoom } from "./lib";
 import {
   decide,
   computeSpin,
@@ -325,6 +326,46 @@ export const closeFromTg = internalMutation({
   },
 });
 
+/** Host action arriving from the Mini App, addressed by room code (the Mini
+ *  App doesn't know chat ids). The caller (miniAppHostAction) has already
+ *  verified the Telegram identity against the signed initData. */
+export const hostActionByCode = internalMutation({
+  args: {
+    code: v.string(),
+    tgUserId: v.number(),
+    act: v.union(v.literal("spin"), v.literal("lock"), v.literal("end")),
+  },
+  handler: async (ctx, { code, tgUserId, act }) => {
+    const room = await requireRoom(ctx, code);
+    if (room.tgHostUserId === undefined || room.tgHostUserId !== tgUserId) {
+      throw new ConvexError("Only the person who started this munch can do that.");
+    }
+    if (room.closedAt) throw new ConvexError("This room is closed.");
+
+    if (act === "end") {
+      await ctx.db.patch(room._id, { closedAt: Date.now() });
+      return { roomId: room._id, tgMessageId: room.tgMessageId };
+    }
+
+    const options = await roomOptions(ctx, room._id);
+    if (options.length === 0) throw new ConvexError("Add at least one option first.");
+    if (act === "spin") {
+      const { winner, spinAngle, wheelOptionIds } = computeSpin(options);
+      await decide(ctx, room, {
+        mode: "spin",
+        winnerId: winner._id,
+        votes: winner.voteCount,
+        spinAngle,
+        wheelOptionIds,
+      });
+    } else {
+      const winner = pickTop(options);
+      await decide(ctx, room, { mode: "lock", winnerId: winner._id, votes: winner.voteCount });
+    }
+    return { roomId: room._id, tgMessageId: room.tgMessageId };
+  },
+});
+
 /** Telegram renumbers a chat when a group upgrades to a supergroup. */
 export const migrateChat = internalMutation({
   args: { fromChatId: v.number(), toChatId: v.number() },
@@ -390,8 +431,16 @@ function renderSession(state: SessionState): {
   const rows: unknown[][] = options.map((o) => [
     { text: `${o.emoji} ${o.text} · ${o.voteCount}`, callback_data: `v:${o._id}` },
   ]);
+  // Prefer the Mini App (opens in-place over the chat, carries the room code
+  // via startapp); fall back to the plain web link while no Mini App is
+  // registered with BotFather.
+  const miniAppLink = deployEnv().TELEGRAM_MINIAPP_LINK; // e.g. https://t.me/MunchBot/munch
   const siteUrl = deployEnv().SITE_URL;
-  if (siteUrl) {
+  if (miniAppLink) {
+    rows.push([
+      { text: "🎡 Open Munch", url: `${miniAppLink.replace(/\/$/, "")}?startapp=${room.code}` },
+    ]);
+  } else if (siteUrl) {
     rows.push([{ text: "🌐 Open on the web", url: `${siteUrl.replace(/\/$/, "")}/r/${room.code}` }]);
   }
 
@@ -436,6 +485,87 @@ export const announceResult = internalAction({
   args: { roomId: v.id("rooms") },
   handler: async (ctx, { roomId }) => {
     await announce(ctx, roomId);
+  },
+});
+
+// —— Mini App ——
+
+async function hmacSha256(key: BufferSource, data: string): Promise<ArrayBuffer> {
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    key,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  return crypto.subtle.sign("HMAC", cryptoKey, new TextEncoder().encode(data));
+}
+
+const INIT_DATA_MAX_AGE_S = 24 * 60 * 60;
+
+/** Verify a Mini App's signed initData (HMAC chain per Telegram's spec) and
+ *  return the authenticated user. This is what makes Mini App host actions
+ *  trustworthy — the client can't forge who it is. */
+async function verifyInitData(initData: string): Promise<TgUser> {
+  const params = new URLSearchParams(initData);
+  const hash = params.get("hash");
+  if (!hash) throw new ConvexError("Open this from your Telegram chat.");
+  params.delete("hash");
+  const dataCheckString = [...params.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([k, value]) => `${k}=${value}`)
+    .join("\n");
+
+  const secret = await hmacSha256(new TextEncoder().encode("WebAppData"), botToken());
+  const signature = await hmacSha256(secret, dataCheckString);
+  const hex = [...new Uint8Array(signature)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  if (hex !== hash) throw new ConvexError("Couldn't verify your Telegram session.");
+
+  const authDate = Number(params.get("auth_date") ?? 0);
+  if (!authDate || Date.now() / 1000 - authDate > INIT_DATA_MAX_AGE_S) {
+    throw new ConvexError("This session expired — reopen Munch from the chat.");
+  }
+  const user = JSON.parse(params.get("user") ?? "null") as TgUser | null;
+  if (!user?.id) throw new ConvexError("Couldn't verify your Telegram session.");
+  return user;
+}
+
+/** Spin / lock / end from inside the Mini App. Verifies the signed Telegram
+ *  identity, applies the decision, then mirrors the chat-side effects the
+ *  equivalent /spin, /lock, /end commands would have. */
+export const miniAppHostAction = action({
+  args: {
+    initData: v.string(),
+    code: v.string(),
+    act: v.union(v.literal("spin"), v.literal("lock"), v.literal("end")),
+  },
+  handler: async (ctx, { initData, code, act }) => {
+    const user = await verifyInitData(initData);
+    const res = await ctx.runMutation(internal.telegram.hostActionByCode, {
+      code,
+      tgUserId: user.id,
+      act,
+    });
+    if (act === "spin") {
+      // Wheel is animating in the Mini App — drumroll the chat, reveal after.
+      if (res.tgMessageId !== undefined) {
+        const state = await ctx.runQuery(internal.telegram.sessionState, { roomId: res.roomId });
+        if (state?.room.tgChatId !== undefined) {
+          await tg("editMessageText", {
+            chat_id: state.room.tgChatId,
+            message_id: res.tgMessageId,
+            text: "🥁 Spinning the wheel…",
+          });
+        }
+      }
+      await ctx.scheduler.runAfter(SPIN_SUSPENSE_MS, internal.telegram.announceResult, {
+        roomId: res.roomId,
+      });
+    } else if (act === "lock") {
+      await announce(ctx, res.roomId);
+    } else {
+      await refreshSessionMessage(ctx, res.roomId);
+    }
   },
 });
 

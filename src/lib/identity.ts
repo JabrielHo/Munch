@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import { isTelegram, tgUser, tgDisplayName } from "./telegram";
 
 /**
  * Participant identity, kept entirely on the device — no account needed.
@@ -8,6 +9,11 @@ import { api } from "../../convex/_generated/api";
  * `CLIENT_ID` is a stable random id per browser (used to dedupe votes and let
  * people remove their own options). It's computed once at module load, so no
  * component ever needs an effect to read it.
+ *
+ * Inside Telegram, identity comes from the Mini App session instead: the
+ * clientId is "tg:<telegram user id>" — the SAME id the bot writes for votes
+ * cast on the chat's buttons — so a person is one voter across both surfaces,
+ * and their Telegram name replaces the name gate.
  */
 const CLIENT_KEY = "munch.clientId";
 const NAME_KEY = "munch.name";
@@ -19,6 +25,7 @@ export const MAX_TITLE = 40;
 export const MAX_TEXT = 60;
 
 function readClientId(): string {
+  if (isTelegram && tgUser) return `tg:${tgUser.id}`;
   let id = localStorage.getItem(CLIENT_KEY);
   if (!id) {
     id = crypto.randomUUID();
@@ -40,7 +47,9 @@ export function cleanName(name: string): string {
  * need an effect" pattern: storage is written when the user acts, not reactively.
  */
 export function useDisplayName() {
-  const [name, setNameState] = useState(() => localStorage.getItem(NAME_KEY) ?? "");
+  const [name, setNameState] = useState(
+    () => (isTelegram ? cleanName(tgDisplayName(tgUser)) : null) || localStorage.getItem(NAME_KEY) || "",
+  );
 
   const setName = useCallback((next: string) => {
     const value = cleanName(next);
@@ -62,6 +71,10 @@ export function useViewerName() {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const profile = useQuery(api.account.myProfile, isAuthenticated ? {} : "skip");
   const [deviceName, setDeviceName] = useDisplayName();
+  if (isTelegram) {
+    // Telegram identity is known synchronously — nothing to resolve, no gate.
+    return { name: deviceName, isAuthenticated: false, resolving: false, deviceName, setDeviceName };
+  }
   const name = isAuthenticated ? (profile?.name ?? "") : deviceName;
   const resolving = isLoading || (isAuthenticated && profile === undefined);
   return { name, isAuthenticated, resolving, deviceName, setDeviceName };

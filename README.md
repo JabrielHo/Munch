@@ -186,6 +186,32 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook" \
 **4. Add the bot to your group** and send `/munch`. That's it — for production,
 repeat steps 2–3 with `--prod` env vars and the prod `.convex.site` URL.
 
+### The Mini App (the wheel, inside Telegram)
+
+The session message's **🎡 Open Munch** button opens the full Munch room —
+live options, votes, and the synced spin wheel — as a Telegram Mini App layered
+over the chat. No accounts, no name gate: identity comes from Telegram
+(the same `tg:<user id>` the chat buttons use), and host actions are verified
+server-side against Telegram's signed `initData`.
+
+> ⚠️ The Mini App is still a hosted web page — Cloudflare Pages (or any static
+> host) must keep serving the app for it to work. "Decommissioning the web app"
+> means retiring the standalone site experience, not the hosting.
+
+**1. Register it** — in [@BotFather](https://t.me/BotFather): `/newapp`, pick
+your bot, set the **Web App URL** to `https://your-domain.com/tg`, and choose a
+short name (e.g. `munch`). That mints the direct link `https://t.me/YourBot/munch`.
+
+**2. Tell the deployment about the link** (this switches the session-message
+button from the plain web link to the Mini App):
+
+```bash
+npx convex env set TELEGRAM_MINIAPP_LINK https://t.me/YourBot/munch
+```
+
+The bot appends `?startapp=<room code>` per session; Telegram hands it back to
+the app as `start_param`, and the `/tg` route forwards into the room.
+
 ---
 
 ## Project layout

@@ -184,7 +184,12 @@ export const getRoom = query({
       .collect();
     rows.sort((a, b) => b.voteCount - a.voteCount || a.createdAt - b.createdAt);
     const userId = await getAuthUserId(ctx);
-    const viewerIsHost = userId !== null && userId === room.hostUserId;
+    // Web host = signed-in account match. Telegram host = the Mini App viewer
+    // whose clientId is "tg:<the starter's id>". The latter only gates UI —
+    // actual host actions from the Mini App re-verify the signed initData.
+    const viewerIsHost =
+      (userId !== null && userId === room.hostUserId) ||
+      (room.tgHostUserId !== undefined && clientId === `tg:${room.tgHostUserId}`);
 
     // Resolve account holders' CURRENT names once, so a rename is reflected on
     // everything they own — not just rows written after the rename. Telegram
