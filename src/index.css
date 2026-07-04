@@ -378,7 +378,10 @@ input {
   position: sticky;
   top: 0;
   z-index: 5;
-  background: linear-gradient(var(--bg) 72%, transparent);
+  /* Solid almost to the bottom edge: on narrow screens the header grows
+     (wrapping presence pills), and content scrolling under a too-early fade
+     shows through the pills row. */
+  background: linear-gradient(var(--bg) calc(100% - 10px), transparent);
   padding: 6px 0 12px;
   margin-bottom: 4px;
 }
@@ -798,6 +801,10 @@ input {
   justify-content: center;
   text-align: center;
   gap: 26px;
+  /* The rotating wheel's post-transform bounding box is ~1.3x its diameter and
+     counts toward scrollable overflow — without this, narrow phones grow a
+     horizontal scrollbar mid-spin. The disc itself never paints outside. */
+  overflow: hidden;
 }
 .decide-hype {
   font-family: var(--font-display);
