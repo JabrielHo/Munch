@@ -19,6 +19,7 @@ export default defineSchema({
     tgChatId: v.number(), // the group chat the session lives in
     tgHostUserId: v.number(), // Telegram user who ran /munch
     tgMessageId: v.optional(v.number()), // the bot's live session message (edited in place)
+    tgRefreshPending: v.optional(v.boolean()), // a scoreboard re-render is scheduled (debounce)
     // "collecting" = people adding/voting; "deciding" = the synced reveal.
     phase: v.union(v.literal("collecting"), v.literal("deciding")),
     // How the current decision is being made (set when entering "deciding").

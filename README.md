@@ -2,18 +2,17 @@
 
 ### Check it out [here](https://munch.jabrielho.com)
 
-A Telegram bot (+ Mini App) that helps your group chat decide where to eat —
-**without leaving the conversation**. Someone sends `/munch`, everyone adds a
-place **or** a craving (like "ramen" or "chicken rice") and votes on the bot's
-live message, and the starter **spins a wheel** or **locks in the top vote**.
-The winner lands right in the chat.
+A Telegram bot + Mini App that helps your group chat decide where to eat —
+**without leaving the conversation**. Someone sends `/munch`, everyone taps
+**🎡 Open Munch** to add a place **or** a craving (like "ramen" or "chicken
+rice") and vote, and the starter **spins the wheel** or **locks in the top
+vote**. The winner lands right back in the chat.
 
-- **The chat is the room** — no links to hop to, no accounts, no name-typing.
-  Identity comes from Telegram.
-- **Tap to vote** — the bot's session message updates live as votes come in.
-- **The wheel** — the "🎡 Open Munch" button opens the full experience as a
-  Telegram Mini App over the chat: live list, votes, and a spin wheel that
-  animates to the same result on every phone.
+- **The chat is the notice board** — the bot's message is a live scoreboard
+  (auto-updated as votes come in) plus the winner announcement.
+- **The Mini App is the room** — one button opens it over the chat: add, vote,
+  and watch the wheel animate to the same result on every phone. No accounts,
+  no name-typing; identity comes from Telegram.
 
 ## Tech stack
 
@@ -53,11 +52,6 @@ Optionally register the command list with `/setcommands`:
 
 ```
 munch - Start a round
-add - Add a place or craving
-remove - Remove an option you added
-spin - Spin the wheel (host)
-lock - Lock the top pick (host)
-end - Close the round (host)
 help - How it works
 ```
 
@@ -81,13 +75,15 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook" \
 
 **6. Add the bot to a group** and send `/munch`. 🎉
 
-### Bot commands
+### How a round works
 
-- `/munch [title]` — start a round (the sender becomes the host)
-- `/add ramen` — add an option (or just **reply** to the munch message)
-- Tap an option's button to vote; tap again to unvote
-- `/remove ramen` — remove an option you added (host can remove any)
-- `/spin` 🎡 / `/lock` 🔒 / `/end` — host only
+- `/munch [title]` — start a round (the sender becomes the host); the bot
+  posts the scoreboard message
+- Everyone taps **🎡 Open Munch** on that message: add options, vote, unvote —
+  the chat scoreboard follows along (debounced, at most one edit per burst)
+- The host spins the wheel 🎡 or locks the top pick 🔒 from inside the app;
+  ending the round early lives there too
+- The winner is announced in the chat, Maps link included
 
 ---
 
@@ -182,7 +178,7 @@ npx convex env set --prod SITE_URL https://your-domain.com
 convex/            Backend: schema, room logic, Telegram bot, food classifier
   schema.ts        Tables: rooms, options, votes, presence
   rooms.ts         Shared room rules + the queries/mutations the room UI uses
-  telegram.ts      Bot webhook: /munch sessions, vote buttons, spin/lock,
+  telegram.ts      Bot webhook: /munch sessions, live scoreboard message,
                    Mini App initData verification + host actions
   foods.ts         Place-vs-craving classifier + your curated spots
   presence.ts      "who's here" heartbeat (room screen)

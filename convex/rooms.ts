@@ -1,5 +1,6 @@
 import { v, ConvexError } from "convex/values";
 import { mutation, query, type MutationCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { classify } from "./foods";
 import { MAX_NAME, MAX_TEXT, byVotesDesc, clean, roomByCode, requireRoom } from "./lib";
@@ -49,6 +50,21 @@ export function randomRoomName(): string {
 /** The one host check: is this clientId the Telegram user who ran /munch? */
 export function isTgHost(room: Doc<"rooms">, clientId: string): boolean {
   return clientId === `tg:${room.tgHostUserId}`;
+}
+
+const CHAT_REFRESH_DEBOUNCE_MS = 2000;
+
+/** Mini App activity should show up on the chat's scoreboard message — but a
+ *  voting burst must not turn into an editMessageText per tap (Telegram rate
+ *  limits chat edits). Each mutation calls this; the flag coalesces a burst
+ *  into at most one re-render per debounce window. Serializable mutations make
+ *  the check-then-set race-free. */
+async function scheduleChatRefresh(ctx: MutationCtx, room: Doc<"rooms">) {
+  if (room.tgMessageId === undefined || room.tgRefreshPending) return;
+  await ctx.db.patch(room._id, { tgRefreshPending: true });
+  await ctx.scheduler.runAfter(CHAT_REFRESH_DEBOUNCE_MS, internal.telegram.refreshSession, {
+    roomId: room._id,
+  });
 }
 
 /** Write the canonical "deciding" patch — one source of truth for spin and
@@ -217,7 +233,7 @@ export const getRoom = query({
       mine: addedByClientId === clientId,
     }));
     // Don't ship Telegram chat/user ids (or the unused-on-web hostName).
-    const { tgChatId, tgHostUserId, tgMessageId, hostName, ...publicRoom } = room;
+    const { tgChatId, tgHostUserId, tgMessageId, tgRefreshPending, hostName, ...publicRoom } = room;
     return {
       room: publicRoom,
       options,
@@ -240,6 +256,7 @@ export const addOption = mutation({
   handler: async (ctx, { code, text, name, clientId }) => {
     const room = await requireRoom(ctx, code);
     const { optionId } = await insertOption(ctx, room, { text, name, clientId });
+    await scheduleChatRefresh(ctx, room);
     return { optionId };
   },
 });
@@ -265,6 +282,7 @@ export const removeOption = mutation({
       .collect();
     await Promise.all(votes.map((vote) => ctx.db.delete(vote._id)));
     await ctx.db.delete(optionId);
+    await scheduleChatRefresh(ctx, room);
   },
 });
 
@@ -272,7 +290,8 @@ export const removeOption = mutation({
 export const toggleVote = mutation({
   args: { optionId: v.id("options"), clientId: v.string(), name: v.string() },
   handler: async (ctx, { optionId, clientId, name }) => {
-    const { voted } = await toggleVoteCore(ctx, optionId, clientId, name);
+    const { voted, room } = await toggleVoteCore(ctx, optionId, clientId, name);
+    await scheduleChatRefresh(ctx, room);
     return { voted };
   },
 });

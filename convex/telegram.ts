@@ -11,24 +11,21 @@ import {
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { MAX_NAME, MAX_TITLE, byVotesDesc, clean, mapsUrl, requireRoom } from "./lib";
-import {
-  decide,
-  computeSpin,
-  pickTop,
-  insertOption,
-  toggleVoteCore,
-  randomRoomName,
-} from "./rooms";
+import { decide, computeSpin, pickTop, randomRoomName } from "./rooms";
 
 /**
- * Munch as a Telegram bot: the group chat IS the room.
+ * Munch as a Telegram bot, app-first: the chat is the notice board, the Mini
+ * App is where everything happens.
  *
- *  - /munch posts a live "session message" with one vote button per option;
- *    the bot edits it in place as options and votes come in.
- *  - Members add options with /add or by replying to the session message.
- *  - The starter (host) runs /spin, /lock, or /end.
- *  - Participants map onto the web identity scheme as clientId "tg:<user id>",
- *    so options/votes reuse the exact same tables and rules as the web app.
+ *  - /munch posts a live "session message": the round's title, a vote tally
+ *    that the bot edits in place, and one button — 🎡 Open Munch.
+ *  - Adding, voting, and the host's spin/lock/end all live in the Mini App
+ *    (participants are clientId "tg:<user id>"; host actions verify Telegram's
+ *    signed initData). App activity re-renders the tally via a debounced
+ *    refresh scheduled from the room mutations (see scheduleChatRefresh in
+ *    rooms.ts).
+ *  - The winner is announced back into the chat, so people who never open the
+ *    app still see the outcome.
  *
  * Updates arrive on the /telegram HTTP route (http.ts), which verifies the
  * webhook secret and hands the raw update to `handleUpdate`.
@@ -48,7 +45,6 @@ type TgMessage = {
   from?: TgUser;
   chat: TgChat;
   text?: string;
-  reply_to_message?: { message_id: number };
   new_chat_members?: TgUser[];
   migrate_to_chat_id?: number;
 };
@@ -56,6 +52,7 @@ type TgCallbackQuery = { id: string; from: TgUser; data?: string };
 type TgUpdate = { message?: TgMessage; callback_query?: TgCallbackQuery };
 
 const SPIN_SUSPENSE_MS = 4000; // drumroll before the winner is revealed
+const TALLY_MAX = 8; // options shown in the chat scoreboard
 
 // —— Small helpers ——
 
@@ -64,9 +61,6 @@ const SPIN_SUSPENSE_MS = 4000; // drumroll before the winner is revealed
 export function deployEnv(): Record<string, string | undefined> {
   return (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
 }
-
-/** Telegram users fold into the web identity scheme as "tg:<user id>". */
-const tgClientId = (userId: number) => `tg:${userId}`;
 
 function displayName(from: TgUser): string {
   const full = [from.first_name, from.last_name].filter(Boolean).join(" ");
@@ -115,15 +109,11 @@ function esc(s: string): string {
 }
 
 const HELP = [
-  "🍽 <b>Munch</b> — decide where to eat, right here in the chat.",
+  "🍽 <b>Munch</b> — decide where to eat, without leaving the chat.",
   "",
   "/munch <i>[title]</i> — start a round",
-  "/add <i>place or craving</i> — add an option (or just reply to the munch message)",
-  "Tap an option's button to vote; tap again to unvote.",
-  "/remove <i>text</i> — remove an option you added",
-  "/spin — spin the wheel 🎡 (starter only)",
-  "/lock — lock in the top pick 🔒 (starter only)",
-  "/end — close the round (starter only)",
+  "",
+  "Then tap 🎡 <b>Open Munch</b> on the round's message: add cravings, vote, and — if you started the round — spin the wheel or lock the top pick. The tally updates here live, and the winner lands right back in the chat.",
 ].join("\n");
 
 const PRIVATE_HELP =
@@ -143,17 +133,11 @@ async function activeSession(ctx: QueryCtx | MutationCtx, chatId: number) {
     .first();
 }
 
-async function requireSession(ctx: QueryCtx | MutationCtx, chatId: number) {
-  const room = await activeSession(ctx, chatId);
-  if (!room) throw new ConvexError("No munch running here — start one with /munch.");
-  return room;
-}
-
 const HOST_ACT = v.union(v.literal("spin"), v.literal("lock"), v.literal("end"));
 
 /** The one host-action implementation: gate on the starter, then end / spin /
- *  lock. Chat commands and the Mini App differ only in how they find the room
- *  and prove identity — everything below that line lives here. */
+ *  lock. Only reachable through the Mini App, whose caller has already
+ *  verified the Telegram identity against the signed initData. */
 async function applyHostAction(
   ctx: MutationCtx,
   room: Doc<"rooms">,
@@ -212,12 +196,6 @@ export const sessionState = internalQuery({
   },
 });
 
-/** The live session for a chat — lets the action route replies and commands. */
-export const activeRoom = internalQuery({
-  args: { chatId: v.number() },
-  handler: async (ctx, { chatId }) => activeSession(ctx, chatId),
-});
-
 // —— Internal mutations ——
 
 /** /munch — create a session, or hand back the one already running. */
@@ -235,8 +213,8 @@ export const startSession = internalMutation({
       return { roomId: existing._id, existing: true, oldMessageId: existing.tgMessageId };
     }
     const roomId = await ctx.db.insert("rooms", {
-      // Rooms started in Telegram still get a share code, so the same room can
-      // open on the web (and later inside a Mini App) with zero migration.
+      // The code rides in the Open Munch button's startapp param — it's how the
+      // Mini App (and web guests via the room link) find this room.
       code: crypto.randomUUID(),
       title:
         clean(args.title ?? "", MAX_TITLE) ||
@@ -260,75 +238,31 @@ export const setSessionMessage = internalMutation({
   },
 });
 
-export const addFromTg = internalMutation({
-  args: { chatId: v.number(), tgUserId: v.number(), name: v.string(), text: v.string() },
-  handler: async (ctx, args) => {
-    const room = await requireSession(ctx, args.chatId);
-    const { text, emoji } = await insertOption(ctx, room, {
-      text: args.text,
-      name: args.name,
-      clientId: tgClientId(args.tgUserId),
-    });
-    return { roomId: room._id, text, emoji };
-  },
-});
-
-export const voteFromTg = internalMutation({
-  args: { optionId: v.string(), tgUserId: v.number(), name: v.string() },
-  handler: async (ctx, args) => {
-    // The id rides in callback_data, so it arrives as an untrusted string.
-    const optionId = ctx.db.normalizeId("options", args.optionId);
-    if (!optionId) throw new ConvexError("That option's gone.");
-    const { voted, option } = await toggleVoteCore(
-      ctx,
-      optionId,
-      tgClientId(args.tgUserId),
-      args.name,
-    );
-    return { roomId: option.roomId, voted, label: `${option.emoji} ${option.text}` };
-  },
-});
-
-export const removeFromTg = internalMutation({
-  args: { chatId: v.number(), tgUserId: v.number(), text: v.string() },
-  handler: async (ctx, args) => {
-    const room = await requireSession(ctx, args.chatId);
-    if (room.phase !== "collecting") throw new ConvexError("Can't change options mid-decision.");
-    const options = await roomOptions(ctx, room._id);
-    const needle = args.text.trim().toLowerCase();
-    const option = options.find((o) => o.text.toLowerCase() === needle);
-    if (!option) throw new ConvexError(`Couldn't find "${args.text.trim()}" on the list.`);
-    const isHost = room.tgHostUserId === args.tgUserId;
-    if (option.addedByClientId !== tgClientId(args.tgUserId) && !isHost) {
-      throw new ConvexError("You can only remove options you added.");
-    }
-    const votes = await ctx.db
-      .query("votes")
-      .withIndex("by_option", (q) => q.eq("optionId", option._id))
-      .collect();
-    await Promise.all(votes.map((vote) => ctx.db.delete(vote._id)));
-    await ctx.db.delete(option._id);
-    return { roomId: room._id, removed: option.text };
-  },
-});
-
-/** /spin, /lock, /end from the chat — the room is the chat's live session. */
-export const hostActionFromChat = internalMutation({
-  args: { chatId: v.number(), tgUserId: v.number(), act: HOST_ACT },
-  handler: async (ctx, { chatId, tgUserId, act }) => {
-    const room = await requireSession(ctx, chatId);
-    return applyHostAction(ctx, room, tgUserId, act);
-  },
-});
-
-/** Same host actions arriving from the Mini App, addressed by room code (the
- *  Mini App doesn't know chat ids). The caller (miniAppHostAction) has already
- *  verified the Telegram identity against the signed initData. */
+/** Mini App host actions, addressed by room code (the Mini App doesn't know
+ *  chat ids). The caller (miniAppHostAction) has already verified identity. */
 export const hostActionByCode = internalMutation({
   args: { code: v.string(), tgUserId: v.number(), act: HOST_ACT },
   handler: async (ctx, { code, tgUserId, act }) => {
     const room = await requireRoom(ctx, code);
     return applyHostAction(ctx, room, tgUserId, act);
+  },
+});
+
+/** Consumes the debounce flag set by scheduleChatRefresh (rooms.ts). Cleared
+ *  BEFORE rendering, so activity landing mid-render schedules a fresh pass. */
+export const clearRefreshPending = internalMutation({
+  args: { roomId: v.id("rooms") },
+  handler: async (ctx, { roomId }) => {
+    await ctx.db.patch(roomId, { tgRefreshPending: undefined });
+  },
+});
+
+/** Debounced re-render of the chat scoreboard after Mini App activity. */
+export const refreshSession = internalAction({
+  args: { roomId: v.id("rooms") },
+  handler: async (ctx, { roomId }) => {
+    await ctx.runMutation(internal.telegram.clearRefreshPending, { roomId });
+    await refreshSessionMessage(ctx, roomId);
   },
 });
 
@@ -372,7 +306,16 @@ function resultText(state: SessionState): string {
   return lines.join("\n");
 }
 
-/** The live session message: status text + one vote button per option. */
+function tallyLines(options: Doc<"options">[], max: number): string {
+  const lines = options
+    .slice(0, max)
+    .map((o) => `${o.emoji} ${esc(o.text)} — ${o.voteCount}`);
+  if (options.length > max) lines.push(`<i>…and ${options.length - max} more in the app</i>`);
+  return lines.join("\n");
+}
+
+/** The live session message: a scoreboard the bot edits in place, plus the
+ *  one button that matters — 🎡 Open Munch. */
 function renderSession(state: SessionState): {
   text: string;
   reply_markup?: Record<string, unknown>;
@@ -380,10 +323,7 @@ function renderSession(state: SessionState): {
   const { room, options } = state;
 
   if (room.closedAt) {
-    const tally = options
-      .slice(0, 5)
-      .map((o) => `${o.emoji} ${esc(o.text)} — ${o.voteCount}`)
-      .join("\n");
+    const tally = tallyLines(options, 5);
     return {
       text: `🍽 <b>${esc(room.title)}</b>\n\n${resultText(state)}${tally ? `\n\n<i>Final tally</i>\n${tally}` : ""}`,
     };
@@ -392,29 +332,23 @@ function renderSession(state: SessionState): {
   const header = `🍽 <b>${esc(room.title)}</b>\n<i>started by ${esc(room.hostName)}</i>`;
   const body =
     options.length === 0
-      ? "No options yet — add one with <code>/add ramen</code> or just reply to this message."
-      : "Tap an option to vote — tap again to unvote. Add more with /add or by replying here.";
-  const footer = `<i>${esc(room.hostName)} decides with /spin 🎡 or /lock 🔒</i>`;
+      ? "<i>Nothing on the menu yet — open Munch and get us started!</i>"
+      : tallyLines(options, TALLY_MAX);
+  const footer = `<i>Tap 🎡 Open Munch to add cravings &amp; vote. ${esc(room.hostName)} spins the wheel.</i>`;
 
-  const rows: unknown[][] = options.map((o) => [
-    { text: `${o.emoji} ${o.text} · ${o.voteCount}`, callback_data: `v:${o._id}` },
-  ]);
-  // Prefer the Mini App (opens in-place over the chat, carries the room code
-  // via startapp); fall back to the plain web link while no Mini App is
-  // registered with BotFather.
+  // The Mini App opens in-place over the chat, carrying the room code via
+  // startapp. Fall back to the plain web link while no Mini App is registered.
   const miniAppLink = deployEnv().TELEGRAM_MINIAPP_LINK; // e.g. https://t.me/MunchBot/munch
   const siteUrl = deployEnv().SITE_URL;
-  if (miniAppLink) {
-    rows.push([
-      { text: "🎡 Open Munch", url: `${miniAppLink.replace(/\/$/, "")}?startapp=${room.code}` },
-    ]);
-  } else if (siteUrl) {
-    rows.push([{ text: "🌐 Open on the web", url: `${siteUrl.replace(/\/$/, "")}/r/${room.code}` }]);
-  }
+  const button = miniAppLink
+    ? { text: "🎡 Open Munch", url: `${miniAppLink.replace(/\/$/, "")}?startapp=${room.code}` }
+    : siteUrl
+      ? { text: "🎡 Open Munch", url: `${siteUrl.replace(/\/$/, "")}/r/${room.code}` }
+      : null;
 
   return {
     text: `${header}\n\n${body}\n\n${footer}`,
-    reply_markup: { inline_keyboard: rows },
+    ...(button ? { reply_markup: { inline_keyboard: [[button]] } } : {}),
   };
 }
 
@@ -456,10 +390,9 @@ export const announceResult = internalAction({
   },
 });
 
-/** Chat aftermath of a host action, shared by the /spin, /lock, /end commands
- *  and the Mini App: drumroll + scheduled reveal for spin (the Mini App wheel
- *  is animating meanwhile), immediate announcement for lock, final re-render
- *  for end. */
+/** Chat aftermath of a Mini App host action: drumroll + scheduled reveal for
+ *  spin (the app's wheel is animating meanwhile), immediate announcement for
+ *  lock, a final re-render for end. */
 async function afterHostAction(
   ctx: ActionCtx,
   act: "spin" | "lock" | "end",
@@ -526,8 +459,7 @@ async function verifyInitData(initData: string): Promise<TgUser> {
 }
 
 /** Spin / lock / end from inside the Mini App. Verifies the signed Telegram
- *  identity, applies the decision, then mirrors the chat-side effects the
- *  equivalent /spin, /lock, /end commands would have. */
+ *  identity, applies the decision, then plays out the chat-side effects. */
 export const miniAppHostAction = action({
   args: { initData: v.string(), code: v.string(), act: HOST_ACT },
   handler: async (ctx, { initData, code, act }) => {
@@ -559,45 +491,18 @@ async function replyOnError(chatId: number, replyToMessageId: number, fn: () => 
   }
 }
 
-/** Quiet "got it" on the user's own message, e.g. 👍 on a successful /add. */
-async function react(chatId: number, messageId: number, emoji: string) {
-  await tg("setMessageReaction", {
-    chat_id: chatId,
-    message_id: messageId,
-    reaction: [{ type: "emoji", emoji }],
-  });
-}
-
 function parseCommand(text: string): { name: string; args: string } | null {
   const m = /^\/([a-zA-Z_]+)(?:@\w+)?(?:\s+([\s\S]+))?$/.exec(text);
   return m ? { name: m[1].toLowerCase(), args: (m[2] ?? "").trim() } : null;
 }
 
-async function onCallback(ctx: ActionCtx, cb: TgCallbackQuery) {
-  const data = cb.data ?? "";
-  if (!data.startsWith("v:")) {
-    await tg("answerCallbackQuery", { callback_query_id: cb.id });
-    return;
-  }
-  try {
-    const res = await ctx.runMutation(internal.telegram.voteFromTg, {
-      optionId: data.slice(2),
-      tgUserId: cb.from.id,
-      name: displayName(cb.from),
-    });
-    await Promise.all([
-      tg("answerCallbackQuery", {
-        callback_query_id: cb.id,
-        text: res.voted ? `Voted for ${res.label}` : `Vote removed from ${res.label}`,
-      }),
-      refreshSessionMessage(ctx, res.roomId),
-    ]);
-  } catch (err) {
-    await tg("answerCallbackQuery", {
-      callback_query_id: cb.id,
-      text: err instanceof ConvexError ? String(err.data) : "Something went wrong — try again.",
-    });
-  }
+/** Buttons no longer carry actions — anything tapped on an old session
+ *  message just gets pointed at the app. */
+async function onCallback(cb: TgCallbackQuery) {
+  await tg("answerCallbackQuery", {
+    callback_query_id: cb.id,
+    text: "Munch lives in the app now — tap 🎡 Open Munch on the round's message.",
+  });
 }
 
 async function onMessage(ctx: ActionCtx, msg: TgMessage) {
@@ -622,29 +527,12 @@ async function onMessage(ctx: ActionCtx, msg: TgMessage) {
   const text = (msg.text ?? "").trim();
   if (!text || !msg.from || msg.from.is_bot) return;
   const from = msg.from;
-  const name = displayName(from);
   const cmd = parseCommand(text);
+  if (!cmd) return;
 
   if (!isGroup) {
     // Private chats are just an onboarding surface.
     await tg("sendMessage", { chat_id: chat.id, text: PRIVATE_HELP, parse_mode: "HTML" });
-    return;
-  }
-
-  // Plain text only counts as an add when it replies to the live session message.
-  if (!cmd) {
-    if (!msg.reply_to_message) return;
-    const room = await ctx.runQuery(internal.telegram.activeRoom, { chatId: chat.id });
-    if (!room || room.tgMessageId !== msg.reply_to_message.message_id) return;
-    await replyOnError(chat.id, msg.message_id, async () => {
-      const res = await ctx.runMutation(internal.telegram.addFromTg, {
-        chatId: chat.id,
-        tgUserId: from.id,
-        name,
-        text,
-      });
-      await Promise.all([react(chat.id, msg.message_id, "👍"), refreshSessionMessage(ctx, res.roomId)]);
-    });
     return;
   }
 
@@ -660,7 +548,7 @@ async function onMessage(ctx: ActionCtx, msg: TgMessage) {
           chatId: chat.id,
           ...(chat.title ? { chatTitle: chat.title } : {}),
           hostTgUserId: from.id,
-          hostName: name,
+          hostName: displayName(from),
           ...(cmd.args ? { title: cmd.args } : {}),
         });
         // (Re)post the session message so it's the newest thing in the chat.
@@ -679,7 +567,8 @@ async function onMessage(ctx: ActionCtx, msg: TgMessage) {
             roomId: res.roomId,
             messageId: sent.message_id,
           });
-          // Point the superseded copy at the new one so stale buttons don't linger.
+          // Point the superseded copy at the new one so a stale scoreboard
+          // doesn't linger mid-chat.
           if (res.oldMessageId && res.oldMessageId !== sent.message_id) {
             await tg("editMessageText", {
               chat_id: chat.id,
@@ -690,46 +579,6 @@ async function onMessage(ctx: ActionCtx, msg: TgMessage) {
         }
       });
       return;
-
-    case "add":
-      await replyOnError(chat.id, msg.message_id, async () => {
-        if (!cmd.args) throw new ConvexError("Usage: /add ramen (or /add Taco Bell)");
-        const res = await ctx.runMutation(internal.telegram.addFromTg, {
-          chatId: chat.id,
-          tgUserId: from.id,
-          name,
-          text: cmd.args,
-        });
-        await Promise.all([react(chat.id, msg.message_id, "👍"), refreshSessionMessage(ctx, res.roomId)]);
-      });
-      return;
-
-    case "remove":
-      await replyOnError(chat.id, msg.message_id, async () => {
-        if (!cmd.args) throw new ConvexError("Usage: /remove ramen");
-        const res = await ctx.runMutation(internal.telegram.removeFromTg, {
-          chatId: chat.id,
-          tgUserId: from.id,
-          text: cmd.args,
-        });
-        await Promise.all([react(chat.id, msg.message_id, "👌"), refreshSessionMessage(ctx, res.roomId)]);
-      });
-      return;
-
-    case "spin":
-    case "lock":
-    case "end": {
-      const act = cmd.name as "spin" | "lock" | "end";
-      await replyOnError(chat.id, msg.message_id, async () => {
-        const res = await ctx.runMutation(internal.telegram.hostActionFromChat, {
-          chatId: chat.id,
-          tgUserId: from.id,
-          act,
-        });
-        await afterHostAction(ctx, act, res);
-      });
-      return;
-    }
 
     default:
       // Not ours (or a typo) — stay quiet in the group.
@@ -744,7 +593,7 @@ export const handleUpdate = internalAction({
   handler: async (ctx, { update }) => {
     const u = update as TgUpdate;
     try {
-      if (u.callback_query) await onCallback(ctx, u.callback_query);
+      if (u.callback_query) await onCallback(u.callback_query);
       else if (u.message) await onMessage(ctx, u.message);
     } catch (err) {
       console.error("telegram update failed", err);
