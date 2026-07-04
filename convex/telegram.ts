@@ -178,7 +178,7 @@ export const sessionState = internalQuery({
   args: { roomId: v.id("rooms") },
   handler: async (ctx, { roomId }) => {
     const room = await ctx.db.get(roomId);
-    if (!room || room.tgChatId === undefined) return null;
+    if (!room) return null;
     const options = await roomOptions(ctx, roomId);
     const winner = room.winnerOptionId
       ? (options.find((o) => o._id === room.winnerOptionId) ?? null)
@@ -337,7 +337,7 @@ export const hostActionByCode = internalMutation({
   },
   handler: async (ctx, { code, tgUserId, act }) => {
     const room = await requireRoom(ctx, code);
-    if (room.tgHostUserId === undefined || room.tgHostUserId !== tgUserId) {
+    if (room.tgHostUserId !== tgUserId) {
       throw new ConvexError("Only the person who started this munch can do that.");
     }
     if (room.closedAt) throw new ConvexError("This room is closed.");
@@ -453,7 +453,7 @@ function renderSession(state: SessionState): {
 /** Re-render the session message in place after any state change. */
 async function refreshSessionMessage(ctx: ActionCtx, roomId: Id<"rooms">) {
   const state = await ctx.runQuery(internal.telegram.sessionState, { roomId });
-  if (!state || state.room.tgChatId === undefined || state.room.tgMessageId === undefined) return;
+  if (!state || state.room.tgMessageId === undefined) return;
   const { text, reply_markup } = renderSession(state);
   await tg("editMessageText", {
     chat_id: state.room.tgChatId,
@@ -469,7 +469,7 @@ async function refreshSessionMessage(ctx: ActionCtx, roomId: Id<"rooms">) {
  *  chat; an edit wouldn't). Runs via the scheduler after the spin drumroll. */
 async function announce(ctx: ActionCtx, roomId: Id<"rooms">) {
   const state = await ctx.runQuery(internal.telegram.sessionState, { roomId });
-  if (!state || state.room.tgChatId === undefined) return;
+  if (!state) return;
   await refreshSessionMessage(ctx, roomId);
   if (state.winner) {
     await tg("sendMessage", {
@@ -550,7 +550,7 @@ export const miniAppHostAction = action({
       // Wheel is animating in the Mini App — drumroll the chat, reveal after.
       if (res.tgMessageId !== undefined) {
         const state = await ctx.runQuery(internal.telegram.sessionState, { roomId: res.roomId });
-        if (state?.room.tgChatId !== undefined) {
+        if (state) {
           await tg("editMessageText", {
             chat_id: state.room.tgChatId,
             message_id: res.tgMessageId,

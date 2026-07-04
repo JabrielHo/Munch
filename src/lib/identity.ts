@@ -1,6 +1,4 @@
 import { useCallback, useState } from "react";
-import { useConvexAuth, useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
 import { isTelegram, tgUser, tgDisplayName } from "./telegram";
 
 /**
@@ -61,21 +59,10 @@ export function useDisplayName() {
 }
 
 /**
- * Who the current viewer is, for display + presence. A signed-in host's name
- * comes from their ACCOUNT (the same on every device); a guest uses their
- * per-device name. `resolving` stays true until we know which, so callers don't
- * flash a guest name-gate at a host or announce a blank name. The single source
- * of identity resolution — both Home and Room read from here.
+ * Who the current viewer is, for display + presence. Inside Telegram the name
+ * is pre-seeded from the Mini App session; web guests pick one at the gate.
  */
 export function useViewerName() {
-  const { isAuthenticated, isLoading } = useConvexAuth();
-  const profile = useQuery(api.account.myProfile, isAuthenticated ? {} : "skip");
-  const [deviceName, setDeviceName] = useDisplayName();
-  if (isTelegram) {
-    // Telegram identity is known synchronously — nothing to resolve, no gate.
-    return { name: deviceName, isAuthenticated: false, resolving: false, deviceName, setDeviceName };
-  }
-  const name = isAuthenticated ? (profile?.name ?? "") : deviceName;
-  const resolving = isLoading || (isAuthenticated && profile === undefined);
-  return { name, isAuthenticated, resolving, deviceName, setDeviceName };
+  const [name, setName] = useDisplayName();
+  return { name, setName };
 }

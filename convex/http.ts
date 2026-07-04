@@ -1,12 +1,9 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
-import { auth } from "./auth";
 import { deployEnv } from "./telegram";
 
 const http = httpRouter();
-
-auth.addHttpRoutes(http);
 
 /**
  * "I'm leaving" beacon. navigator.sendBeacon fires this on tab/window close —

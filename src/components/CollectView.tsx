@@ -23,22 +23,14 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
   const addOption = useMutation(api.rooms.addOption);
   const toggleVote = useMutation(api.rooms.toggleVote);
   const removeOption = useMutation(api.rooms.removeOption);
-  const spin = useMutation(api.rooms.spin);
-  const lockTop = useMutation(api.rooms.lockTop);
-  const closeRoom = useMutation(api.rooms.closeRoom);
   const miniAppHost = useAction(api.telegram.miniAppHostAction);
 
-  // Web hosts prove themselves via Convex Auth; a Telegram host proves
-  // themselves by sending the signed Mini App initData for server verification.
+  // Host controls only render for the Telegram starter (inside the Mini App),
+  // and every host action is verified server-side against the signed initData.
   function hostAct(act: "spin" | "lock" | "end") {
-    const run = isTelegram
-      ? miniAppHost({ initData: tgInitData, code: room.code, act })
-      : act === "spin"
-        ? spin({ code: room.code })
-        : act === "lock"
-          ? lockTop({ code: room.code })
-          : closeRoom({ code: room.code });
-    run.catch((err) => alert(humanError(err)));
+    miniAppHost({ initData: tgInitData, code: room.code, act }).catch((err) =>
+      alert(humanError(err)),
+    );
   }
 
   const [text, setText] = useState("");

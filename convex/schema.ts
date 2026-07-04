@@ -1,29 +1,23 @@
 import { defineSchema, defineTable } from "convex/server";
-import { authTables } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 
 /**
  * Identity model:
- *  - The HOST signs in (Convex Auth) → identified by a `users` id. They own the
- *    room and are the only one who can spin / lock / reset.
- *  - PARTICIPANTS join via the link with no account, identified by a per-browser
- *    `clientId` (random id kept in localStorage) plus a required display name.
- *  - TELEGRAM rooms live in a group chat instead: the host is the Telegram user
- *    who ran /munch (tgHostUserId, no `users` account), and participants are
- *    Telegram users, folded into the clientId scheme as "tg:<telegram user id>".
+ *  - Rooms are born in a Telegram group chat (/munch). The HOST is the
+ *    Telegram user who started the round (tgHostUserId) — no accounts anywhere.
+ *  - PARTICIPANTS are Telegram users, identified as clientId
+ *    "tg:<telegram user id>" — the chat's vote buttons and the Mini App
+ *    resolve to the same id, so one person is one voter on both surfaces.
+ *  - GUESTS without Telegram can still join through the room's web link with a
+ *    per-browser random clientId plus a display name.
  */
 export default defineSchema({
-  // Tables that power Convex Auth (users, authSessions, authAccounts, …).
-  ...authTables,
-
   rooms: defineTable({
-    code: v.string(), // random UUID in the share link — the only guard on the room
+    code: v.string(), // random UUID in the web/Mini App link — unguessable
     title: v.string(),
-    hostUserId: v.optional(v.id("users")), // web host; absent for Telegram rooms
-    hostName: v.string(),
-    // Telegram-native rooms — set together when the room was started via /munch.
-    tgChatId: v.optional(v.number()), // the group chat the session lives in
-    tgHostUserId: v.optional(v.number()), // Telegram user who ran /munch
+    hostName: v.string(), // snapshot of the starter's Telegram name
+    tgChatId: v.number(), // the group chat the session lives in
+    tgHostUserId: v.number(), // Telegram user who ran /munch
     tgMessageId: v.optional(v.number()), // the bot's live session message (edited in place)
     // "collecting" = people adding/voting; "deciding" = the synced reveal.
     phase: v.union(v.literal("collecting"), v.literal("deciding")),
@@ -35,11 +29,10 @@ export default defineSchema({
     spinAngle: v.optional(v.number()), // final rotation in degrees
     spinStartedAt: v.optional(v.number()), // ms epoch; clients sync from this
     wheelOptionIds: v.optional(v.array(v.id("options"))), // frozen wheel order
-    closedAt: v.optional(v.number()), // host closed the room; read-only when set
+    closedAt: v.optional(v.number()), // closed by the host; read-only when set
     createdAt: v.number(),
   })
     .index("by_code", ["code"])
-    .index("by_host", ["hostUserId"])
     .index("by_tg_chat", ["tgChatId"]),
 
   options: defineTable({
@@ -49,11 +42,8 @@ export default defineSchema({
     emoji: v.string(),
     cuisine: v.optional(v.string()),
     suggestedSpot: v.optional(v.string()),
-    addedByName: v.string(), // snapshot at add time; the live name wins if addedByUserId is set
+    addedByName: v.string(), // snapshot at add time
     addedByClientId: v.string(),
-    // Set when an account holder (the host) added it — lets getRoom resolve the
-    // CURRENT account name so a rename shows up on options they already added.
-    addedByUserId: v.optional(v.id("users")),
     voteCount: v.number(), // denormalized for cheap sorting/rendering
     createdAt: v.number(),
   }).index("by_room", ["roomId"]),

@@ -17,7 +17,7 @@ export default function Room() {
   const votes = useQuery(api.rooms.myVotes, { code, clientId: CLIENT_ID });
   const presence = useQuery(api.presence.here, { code });
 
-  const { name, isAuthenticated, resolving, deviceName, setDeviceName } = useViewerName();
+  const { name, setName } = useViewerName();
   const heartbeat = useMutation(api.presence.heartbeat);
   const leave = useMutation(api.presence.leave);
 
@@ -55,7 +55,7 @@ export default function Room() {
     };
   }, [code, leave]);
 
-  if (data === undefined || resolving) {
+  if (data === undefined) {
     return (
       <div className="screen">
         <div className="loading">
@@ -94,8 +94,10 @@ export default function Room() {
     return <ClosedView room={room} options={options} />;
   }
 
-  if (!isAuthenticated && !deviceName) {
-    return <NameGate room={room} onSubmit={setDeviceName} />;
+  // Telegram viewers arrive with a name (from the Mini App session); only web
+  // guests without one hit the gate.
+  if (!name) {
+    return <NameGate room={room} onSubmit={setName} />;
   }
 
   return (
