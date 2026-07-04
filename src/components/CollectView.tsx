@@ -1,9 +1,10 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { useMutation } from "convex/react";
+import { useAction, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { CLIENT_ID, MAX_TEXT } from "../lib/identity";
+import { isTelegram, tgInitData } from "../lib/telegram";
 import { useClipboard } from "../lib/hooks";
 import { avatarColor, humanError, shareUrl } from "../lib/ui";
 import type { PublicRoom, PublicOption } from "../lib/types";
@@ -22,9 +23,15 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
   const addOption = useMutation(api.rooms.addOption);
   const toggleVote = useMutation(api.rooms.toggleVote);
   const removeOption = useMutation(api.rooms.removeOption);
-  const spin = useMutation(api.rooms.spin);
-  const lockTop = useMutation(api.rooms.lockTop);
-  const closeRoom = useMutation(api.rooms.closeRoom);
+  const miniAppHost = useAction(api.telegram.miniAppHostAction);
+
+  // Host controls only render for the Telegram starter (inside the Mini App),
+  // and every host action is verified server-side against the signed initData.
+  function hostAct(act: "spin" | "lock" | "end") {
+    miniAppHost({ initData: tgInitData, code: room.code, act }).catch((err) =>
+      alert(humanError(err)),
+    );
+  }
 
   const [text, setText] = useState("");
   const { copied, copy } = useClipboard();
@@ -73,21 +80,26 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
     >
       <header className="room-header">
         <div className="room-titlerow">
-          <Link to="/" className="room-back" aria-label="Back to menu">
-            ←
-          </Link>
+          {/* Inside Telegram there's no "menu" to go back to — the chat is home. */}
+          {!isTelegram && (
+            <Link to="/" className="room-back" aria-label="Back to menu">
+              ←
+            </Link>
+          )}
           <h1 className="room-title">
             <span>{room.title}</span>
           </h1>
           <span className="live-dot">LIVE</span>
         </div>
         <div className="room-subrow">
-          <button
-            type="button"
-            className={`share-chip${copied ? " share-chip--done" : ""}`}
-            onClick={() => void copy(shareUrl(room.code))}>
-            {copied ? "Copied! ✓ paste in the chat" : "Copy link 🔗"}
-          </button>
+          {!isTelegram && (
+            <button
+              type="button"
+              className={`share-chip${copied ? " share-chip--done" : ""}`}
+              onClick={() => void copy(shareUrl(room.code))}>
+              {copied ? "Copied! ✓ paste in the chat" : "Copy link 🔗"}
+            </button>
+          )}
           <span className="here-count">{here} here</span>
         </div>
         {names.length > 0 && (
@@ -142,14 +154,14 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
                 <button
                   type="button"
                   className="btn btn--block"
-                  onClick={() => spin({ code: room.code }).catch((err) => alert(humanError(err)))}
+                  onClick={() => hostAct("spin")}
                   disabled={options.length === 0}>
                   🎡 Spin the wheel
                 </button>
                 <button
                   type="button"
                   className="btn btn--ghost btn--block"
-                  onClick={() => lockTop({ code: room.code }).catch((err) => alert(humanError(err)))}
+                  onClick={() => hostAct("lock")}
                   disabled={options.length === 0}>
                   🔒 Lock top pick{leader ? `: ${leader.text}` : ""}
                 </button>
@@ -160,7 +172,7 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
                   className="linklike"
                   onClick={() => {
                     if (confirm("Close this room for everyone?")) {
-                      closeRoom({ code: room.code }).catch((err) => alert(humanError(err)));
+                      hostAct("end");
                     }
                   }}>
                   End this room 🌙

@@ -1,15 +1,13 @@
 import type { Doc } from "../../convex/_generated/dataModel";
 
 /**
- * The room shape the client actually receives. `getRoom` strips the host's
- * internal `hostUserId` before returning, so components type against this.
+ * The room shape the client actually receives. `getRoom` strips the Telegram
+ * chat/user ids before returning, so components type against this.
  */
-export type PublicRoom = Omit<Doc<"rooms">, "hostUserId">;
+export type PublicRoom = Omit<Doc<"rooms">, "tgChatId" | "tgHostUserId" | "tgMessageId" | "hostName">;
 
 /**
- * The option shape the client receives. `getRoom` strips the internal ids
- * (`addedByClientId` — the only gate on removeOption — and `addedByUserId`),
- * resolves a `mine` flag for the current viewer, and rewrites `addedByName` to
- * the adder's live account name when they have one.
+ * The option shape the client receives. `getRoom` strips `addedByClientId`
+ * (the only gate on removeOption) and resolves a `mine` flag for the viewer.
  */
-export type PublicOption = Omit<Doc<"options">, "addedByClientId" | "addedByUserId"> & { mine: boolean };
+export type PublicOption = Omit<Doc<"options">, "addedByClientId"> & { mine: boolean };

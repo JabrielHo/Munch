@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Help your friends decide where to eat — create a room, share the link, everyone adds options, spin or vote.",
+  "description": "Decide where to eat without leaving the group chat — a Telegram bot + Mini App: /munch, add cravings, vote, spin the wheel.",
   "scripts": {
     "dev": "vite",
     "dev:backend": "convex dev",
@@ -12,9 +12,6 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@auth/core": "^0.37.4",
-    "@convex-dev/auth": "^0.0.92",
-    "@convex-dev/rate-limiter": "^0.3.2",
     "convex": "^1.39.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",

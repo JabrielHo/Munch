@@ -7,11 +7,11 @@ dist-ssr
 .env.local
 *.local
 
-# Generated auth keypair; regenerate per deployment
-.auth-keys
-
 # Local verification screenshots
 .e2e
+
+# Claude Code local config
+.claude/
 
 # Editor / OS
 .vscode/*

@@ -1,5 +1,4 @@
 import { ConvexError } from "convex/values";
-import { getAuthUserId } from "@convex-dev/auth/server";
 import type { QueryCtx, MutationCtx } from "./_generated/server";
 
 // Input caps, shared by every mutation that validates text.
@@ -12,11 +11,19 @@ export function clean(s: string, max: number): string {
   return s.replace(/\s+/g, " ").trim().slice(0, max);
 }
 
-/** The host's account display name, canonicalized, with a friendly fallback —
- *  so a blank/missing name (e.g. an account created before names were stored)
- *  never renders empty or blocks presence/voting. */
-export function hostNameOr(name: unknown): string {
-  return clean(String(name ?? ""), MAX_NAME) || "Host";
+/** The one option ordering: most votes first, then first-added. Shared by the
+ *  room query, the wheel, and the bot's keyboard so they can't disagree. */
+export function byVotesDesc(
+  a: { voteCount: number; createdAt: number },
+  b: { voteCount: number; createdAt: number },
+): number {
+  return b.voteCount - a.voteCount || a.createdAt - b.createdAt;
+}
+
+/** Google Maps search link — used by the bot's result message and the web
+ *  result card alike. */
+export function mapsUrl(query: string): string {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 }
 
 /** Look up a room by its share code — an opaque token, matched exactly. */
@@ -32,15 +39,6 @@ export async function requireRoom(ctx: QueryCtx | MutationCtx, code: string) {
   const room = await roomByCode(ctx, code);
   if (!room) {
     throw new ConvexError("That room doesn't exist — double-check the code.");
-  }
-  return room;
-}
-
-/** The single host-authorization chokepoint for host-only mutations. */
-export async function requireHost(ctx: MutationCtx, code: string) {
-  const [userId, room] = await Promise.all([getAuthUserId(ctx), requireRoom(ctx, code)]);
-  if (!userId || room.hostUserId !== userId) {
-    throw new ConvexError("Only the host can do that.");
   }
   return room;
 }
