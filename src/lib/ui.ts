@@ -24,9 +24,8 @@ export function shareUrl(code: string): string {
   return `${window.location.origin}/r/${code}`;
 }
 
-export function mapsUrl(query: string): string {
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
-}
+// One maps-link builder for every surface (bot messages import it too).
+export { mapsUrl } from "../../convex/lib";
 
 /** Pull the friendly message out of a thrown error (ConvexError carries it). */
 export function humanError(err: unknown): string {

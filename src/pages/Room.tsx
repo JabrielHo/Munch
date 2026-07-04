@@ -14,7 +14,6 @@ export default function Room() {
   const { code = "" } = useParams();
 
   const data = useQuery(api.rooms.getRoom, { code, clientId: CLIENT_ID });
-  const votes = useQuery(api.rooms.myVotes, { code, clientId: CLIENT_ID });
   const presence = useQuery(api.presence.here, { code });
 
   const { name, setName } = useViewerName();
@@ -79,8 +78,8 @@ export default function Room() {
     );
   }
 
-  const { room, options, viewerIsHost } = data;
-  const votedIds = new Set<string>(votes ?? []);
+  const { room, options, viewerIsHost, myVoteIds } = data;
+  const votedIds = new Set<string>(myVoteIds);
 
   // A decided room is also "closed", but the spin animation + result reveal
   // take precedence so everyone still sees the decision play out.

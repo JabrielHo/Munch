@@ -4,7 +4,7 @@ import type { Doc } from "../../convex/_generated/dataModel";
  * The room shape the client actually receives. `getRoom` strips the Telegram
  * chat/user ids before returning, so components type against this.
  */
-export type PublicRoom = Omit<Doc<"rooms">, "tgChatId" | "tgHostUserId" | "tgMessageId">;
+export type PublicRoom = Omit<Doc<"rooms">, "tgChatId" | "tgHostUserId" | "tgMessageId" | "hostName">;
 
 /**
  * The option shape the client receives. `getRoom` strips `addedByClientId`

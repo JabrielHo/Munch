@@ -10,7 +10,7 @@ import {
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { MAX_NAME, MAX_TITLE, clean, requireRoom } from "./lib";
+import { MAX_NAME, MAX_TITLE, byVotesDesc, clean, mapsUrl, requireRoom } from "./lib";
 import {
   decide,
   computeSpin,
@@ -114,10 +114,6 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function mapsUrl(query: string): string {
-  return `https://www.google.com/maps/search/?api=1&amp;query=${encodeURIComponent(query)}`;
-}
-
 const HELP = [
   "🍽 <b>Munch</b> — decide where to eat, right here in the chat.",
   "",
@@ -136,15 +132,15 @@ const PRIVATE_HELP =
 
 // —— DB helpers (shared by the internal mutations/queries below) ——
 
-/** The one live session in a chat, if any (newest un-closed Telegram room). */
+/** The one live session in a chat, if any (newest un-closed Telegram room).
+ *  closedAt is part of the index, so this only ever touches open rooms — a
+ *  chat accumulates closed rounds forever and we never want to load those. */
 async function activeSession(ctx: QueryCtx | MutationCtx, chatId: number) {
-  const rooms = await ctx.db
+  return ctx.db
     .query("rooms")
-    .withIndex("by_tg_chat", (q) => q.eq("tgChatId", chatId))
-    .collect();
-  const open = rooms.filter((r) => !r.closedAt);
-  open.sort((a, b) => b.createdAt - a.createdAt);
-  return open[0] ?? null;
+    .withIndex("by_tg_chat", (q) => q.eq("tgChatId", chatId).eq("closedAt", undefined))
+    .order("desc")
+    .first();
 }
 
 async function requireSession(ctx: QueryCtx | MutationCtx, chatId: number) {
@@ -153,13 +149,42 @@ async function requireSession(ctx: QueryCtx | MutationCtx, chatId: number) {
   return room;
 }
 
-/** Host = the Telegram user who ran /munch. The single host gate for the bot. */
-async function requireTgHost(ctx: MutationCtx, chatId: number, tgUserId: number) {
-  const room = await requireSession(ctx, chatId);
+const HOST_ACT = v.union(v.literal("spin"), v.literal("lock"), v.literal("end"));
+
+/** The one host-action implementation: gate on the starter, then end / spin /
+ *  lock. Chat commands and the Mini App differ only in how they find the room
+ *  and prove identity — everything below that line lives here. */
+async function applyHostAction(
+  ctx: MutationCtx,
+  room: Doc<"rooms">,
+  tgUserId: number,
+  act: "spin" | "lock" | "end",
+) {
   if (room.tgHostUserId !== tgUserId) {
     throw new ConvexError("Only the person who started this munch can do that.");
   }
-  return room;
+  if (room.closedAt) throw new ConvexError("This room is closed.");
+
+  if (act === "end") {
+    await ctx.db.patch(room._id, { closedAt: Date.now() });
+  } else {
+    const options = await roomOptions(ctx, room._id);
+    if (options.length === 0) throw new ConvexError("Add at least one option first.");
+    if (act === "spin") {
+      const { winner, spinAngle, wheelOptionIds } = computeSpin(options);
+      await decide(ctx, room, {
+        mode: "spin",
+        winnerId: winner._id,
+        votes: winner.voteCount,
+        spinAngle,
+        wheelOptionIds,
+      });
+    } else {
+      const winner = pickTop(options);
+      await decide(ctx, room, { mode: "lock", winnerId: winner._id, votes: winner.voteCount });
+    }
+  }
+  return { roomId: room._id, tgChatId: room.tgChatId, tgMessageId: room.tgMessageId };
 }
 
 async function roomOptions(ctx: QueryCtx | MutationCtx, roomId: Id<"rooms">) {
@@ -167,7 +192,7 @@ async function roomOptions(ctx: QueryCtx | MutationCtx, roomId: Id<"rooms">) {
     .query("options")
     .withIndex("by_room", (q) => q.eq("roomId", roomId))
     .collect();
-  options.sort((a, b) => b.voteCount - a.voteCount || a.createdAt - b.createdAt);
+  options.sort(byVotesDesc);
   return options;
 }
 
@@ -287,82 +312,23 @@ export const removeFromTg = internalMutation({
   },
 });
 
-/** /spin or /lock — same decision logic as the web app, host-gated by
- *  Telegram user id instead of Convex Auth. */
-export const decideFromTg = internalMutation({
-  args: {
-    chatId: v.number(),
-    tgUserId: v.number(),
-    mode: v.union(v.literal("spin"), v.literal("lock")),
-  },
-  handler: async (ctx, args) => {
-    const room = await requireTgHost(ctx, args.chatId, args.tgUserId);
-    const options = await roomOptions(ctx, room._id);
-    if (options.length === 0) throw new ConvexError("Add at least one option first.");
-
-    if (args.mode === "spin") {
-      const { winner, spinAngle, wheelOptionIds } = computeSpin(options);
-      await decide(ctx, room, {
-        mode: "spin",
-        winnerId: winner._id,
-        votes: winner.voteCount,
-        spinAngle,
-        wheelOptionIds,
-      });
-    } else {
-      const winner = pickTop(options);
-      await decide(ctx, room, { mode: "lock", winnerId: winner._id, votes: winner.voteCount });
-    }
-    return { roomId: room._id, tgMessageId: room.tgMessageId };
+/** /spin, /lock, /end from the chat — the room is the chat's live session. */
+export const hostActionFromChat = internalMutation({
+  args: { chatId: v.number(), tgUserId: v.number(), act: HOST_ACT },
+  handler: async (ctx, { chatId, tgUserId, act }) => {
+    const room = await requireSession(ctx, chatId);
+    return applyHostAction(ctx, room, tgUserId, act);
   },
 });
 
-export const closeFromTg = internalMutation({
-  args: { chatId: v.number(), tgUserId: v.number() },
-  handler: async (ctx, args) => {
-    const room = await requireTgHost(ctx, args.chatId, args.tgUserId);
-    await ctx.db.patch(room._id, { closedAt: Date.now() });
-    return { roomId: room._id };
-  },
-});
-
-/** Host action arriving from the Mini App, addressed by room code (the Mini
- *  App doesn't know chat ids). The caller (miniAppHostAction) has already
+/** Same host actions arriving from the Mini App, addressed by room code (the
+ *  Mini App doesn't know chat ids). The caller (miniAppHostAction) has already
  *  verified the Telegram identity against the signed initData. */
 export const hostActionByCode = internalMutation({
-  args: {
-    code: v.string(),
-    tgUserId: v.number(),
-    act: v.union(v.literal("spin"), v.literal("lock"), v.literal("end")),
-  },
+  args: { code: v.string(), tgUserId: v.number(), act: HOST_ACT },
   handler: async (ctx, { code, tgUserId, act }) => {
     const room = await requireRoom(ctx, code);
-    if (room.tgHostUserId !== tgUserId) {
-      throw new ConvexError("Only the person who started this munch can do that.");
-    }
-    if (room.closedAt) throw new ConvexError("This room is closed.");
-
-    if (act === "end") {
-      await ctx.db.patch(room._id, { closedAt: Date.now() });
-      return { roomId: room._id, tgMessageId: room.tgMessageId };
-    }
-
-    const options = await roomOptions(ctx, room._id);
-    if (options.length === 0) throw new ConvexError("Add at least one option first.");
-    if (act === "spin") {
-      const { winner, spinAngle, wheelOptionIds } = computeSpin(options);
-      await decide(ctx, room, {
-        mode: "spin",
-        winnerId: winner._id,
-        votes: winner.voteCount,
-        spinAngle,
-        wheelOptionIds,
-      });
-    } else {
-      const winner = pickTop(options);
-      await decide(ctx, room, { mode: "lock", winnerId: winner._id, votes: winner.voteCount });
-    }
-    return { roomId: room._id, tgMessageId: room.tgMessageId };
+    return applyHostAction(ctx, room, tgUserId, act);
   },
 });
 
@@ -397,9 +363,11 @@ function resultText(state: SessionState): string {
       : `Locked in with ${votes} vote${votes === 1 ? "" : "s"} 🔒`,
   ];
   if (winner.suggestedSpot) {
-    lines.push(`😋 Try: <a href="${mapsUrl(winner.suggestedSpot)}">${esc(winner.suggestedSpot)}</a>`);
+    lines.push(
+      `😋 Try: <a href="${esc(mapsUrl(winner.suggestedSpot))}">${esc(winner.suggestedSpot)}</a>`,
+    );
   } else if (winner.kind === "place") {
-    lines.push(`📍 <a href="${mapsUrl(winner.text)}">Open in Maps</a>`);
+    lines.push(`📍 <a href="${esc(mapsUrl(winner.text))}">Open in Maps</a>`);
   }
   return lines.join("\n");
 }
@@ -488,6 +456,33 @@ export const announceResult = internalAction({
   },
 });
 
+/** Chat aftermath of a host action, shared by the /spin, /lock, /end commands
+ *  and the Mini App: drumroll + scheduled reveal for spin (the Mini App wheel
+ *  is animating meanwhile), immediate announcement for lock, final re-render
+ *  for end. */
+async function afterHostAction(
+  ctx: ActionCtx,
+  act: "spin" | "lock" | "end",
+  res: { roomId: Id<"rooms">; tgChatId: number; tgMessageId?: number },
+) {
+  if (act === "spin") {
+    if (res.tgMessageId !== undefined) {
+      await tg("editMessageText", {
+        chat_id: res.tgChatId,
+        message_id: res.tgMessageId,
+        text: "🥁 Spinning the wheel…",
+      });
+    }
+    await ctx.scheduler.runAfter(SPIN_SUSPENSE_MS, internal.telegram.announceResult, {
+      roomId: res.roomId,
+    });
+  } else if (act === "lock") {
+    await announce(ctx, res.roomId);
+  } else {
+    await refreshSessionMessage(ctx, res.roomId);
+  }
+}
+
 // —— Mini App ——
 
 async function hmacSha256(key: BufferSource, data: string): Promise<ArrayBuffer> {
@@ -534,11 +529,7 @@ async function verifyInitData(initData: string): Promise<TgUser> {
  *  identity, applies the decision, then mirrors the chat-side effects the
  *  equivalent /spin, /lock, /end commands would have. */
 export const miniAppHostAction = action({
-  args: {
-    initData: v.string(),
-    code: v.string(),
-    act: v.union(v.literal("spin"), v.literal("lock"), v.literal("end")),
-  },
+  args: { initData: v.string(), code: v.string(), act: HOST_ACT },
   handler: async (ctx, { initData, code, act }) => {
     const user = await verifyInitData(initData);
     const res = await ctx.runMutation(internal.telegram.hostActionByCode, {
@@ -546,26 +537,7 @@ export const miniAppHostAction = action({
       tgUserId: user.id,
       act,
     });
-    if (act === "spin") {
-      // Wheel is animating in the Mini App — drumroll the chat, reveal after.
-      if (res.tgMessageId !== undefined) {
-        const state = await ctx.runQuery(internal.telegram.sessionState, { roomId: res.roomId });
-        if (state) {
-          await tg("editMessageText", {
-            chat_id: state.room.tgChatId,
-            message_id: res.tgMessageId,
-            text: "🥁 Spinning the wheel…",
-          });
-        }
-      }
-      await ctx.scheduler.runAfter(SPIN_SUSPENSE_MS, internal.telegram.announceResult, {
-        roomId: res.roomId,
-      });
-    } else if (act === "lock") {
-      await announce(ctx, res.roomId);
-    } else {
-      await refreshSessionMessage(ctx, res.roomId);
-    }
+    await afterHostAction(ctx, act, res);
   },
 });
 
@@ -745,46 +717,19 @@ async function onMessage(ctx: ActionCtx, msg: TgMessage) {
       return;
 
     case "spin":
-      await replyOnError(chat.id, msg.message_id, async () => {
-        const res = await ctx.runMutation(internal.telegram.decideFromTg, {
-          chatId: chat.id,
-          tgUserId: from.id,
-          mode: "spin",
-        });
-        // Drumroll on the session message, then reveal after the suspense beat.
-        if (res.tgMessageId !== undefined) {
-          await tg("editMessageText", {
-            chat_id: chat.id,
-            message_id: res.tgMessageId,
-            text: "🥁 Spinning the wheel…",
-          });
-        }
-        await ctx.scheduler.runAfter(SPIN_SUSPENSE_MS, internal.telegram.announceResult, {
-          roomId: res.roomId,
-        });
-      });
-      return;
-
     case "lock":
+    case "end": {
+      const act = cmd.name as "spin" | "lock" | "end";
       await replyOnError(chat.id, msg.message_id, async () => {
-        const res = await ctx.runMutation(internal.telegram.decideFromTg, {
+        const res = await ctx.runMutation(internal.telegram.hostActionFromChat, {
           chatId: chat.id,
           tgUserId: from.id,
-          mode: "lock",
+          act,
         });
-        await announce(ctx, res.roomId);
+        await afterHostAction(ctx, act, res);
       });
       return;
-
-    case "end":
-      await replyOnError(chat.id, msg.message_id, async () => {
-        const res = await ctx.runMutation(internal.telegram.closeFromTg, {
-          chatId: chat.id,
-          tgUserId: from.id,
-        });
-        await refreshSessionMessage(ctx, res.roomId);
-      });
-      return;
+    }
 
     default:
       // Not ours (or a typo) — stay quiet in the group.

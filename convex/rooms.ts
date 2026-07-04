@@ -2,7 +2,7 @@ import { v, ConvexError } from "convex/values";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { classify } from "./foods";
-import { MAX_NAME, MAX_TEXT, clean, roomByCode, requireRoom } from "./lib";
+import { MAX_NAME, MAX_TEXT, byVotesDesc, clean, roomByCode, requireRoom } from "./lib";
 
 /**
  * Core room logic. Rooms are created by the Telegram bot (/munch — see
@@ -81,7 +81,7 @@ export async function decide(
 /** Pick a spin winner + the wheel geometry, server-side, so every screen
  *  (Mini App wheels, web guests) animates to the exact same result. */
 export function computeSpin(options: Doc<"options">[]) {
-  const sorted = [...options].sort((a, b) => b.voteCount - a.voteCount || a.createdAt - b.createdAt);
+  const sorted = [...options].sort(byVotesDesc);
   const wheel = sorted.slice(0, WHEEL_MAX);
   const idx = Math.floor(Math.random() * wheel.length);
   const winner = wheel[idx];
@@ -186,17 +186,24 @@ export async function toggleVoteCore(
 
 // ——————————————————————— Queries ———————————————————————
 
-/** Everything the room screen needs: room state + options sorted by votes. */
+/** Everything the room screen needs: room state, options sorted by votes, and
+ *  the viewer's own votes (for the "you voted" fill) — one subscription. */
 export const getRoom = query({
   args: { code: v.string(), clientId: v.string() },
   handler: async (ctx, { code, clientId }) => {
     const room = await roomByCode(ctx, code);
     if (!room) return null;
-    const rows = await ctx.db
-      .query("options")
-      .withIndex("by_room", (q) => q.eq("roomId", room._id))
-      .collect();
-    rows.sort((a, b) => b.voteCount - a.voteCount || a.createdAt - b.createdAt);
+    const [rows, myVotes] = await Promise.all([
+      ctx.db
+        .query("options")
+        .withIndex("by_room", (q) => q.eq("roomId", room._id))
+        .collect(),
+      ctx.db
+        .query("votes")
+        .withIndex("by_room_client", (q) => q.eq("roomId", room._id).eq("voterClientId", clientId))
+        .collect(),
+    ]);
+    rows.sort(byVotesDesc);
 
     // Host = the Telegram starter, seen from the Mini App as "tg:<their id>".
     // This flag only gates UI — host actions re-verify the signed initData.
@@ -209,23 +216,14 @@ export const getRoom = query({
       ...rest,
       mine: addedByClientId === clientId,
     }));
-    // Don't ship Telegram chat/user ids to room viewers.
-    const { tgChatId, tgHostUserId, tgMessageId, ...publicRoom } = room;
-    return { room: publicRoom, options, viewerIsHost };
-  },
-});
-
-/** The option ids the given participant has voted for (for the "you voted" fill). */
-export const myVotes = query({
-  args: { code: v.string(), clientId: v.string() },
-  handler: async (ctx, { code, clientId }) => {
-    const room = await roomByCode(ctx, code);
-    if (!room) return [];
-    const votes = await ctx.db
-      .query("votes")
-      .withIndex("by_room_client", (q) => q.eq("roomId", room._id).eq("voterClientId", clientId))
-      .collect();
-    return votes.map((vote) => vote.optionId);
+    // Don't ship Telegram chat/user ids (or the unused-on-web hostName).
+    const { tgChatId, tgHostUserId, tgMessageId, hostName, ...publicRoom } = room;
+    return {
+      room: publicRoom,
+      options,
+      viewerIsHost,
+      myVoteIds: myVotes.map((vote) => vote.optionId),
+    };
   },
 });
 

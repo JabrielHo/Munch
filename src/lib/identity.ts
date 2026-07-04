@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { MAX_NAME, MAX_TEXT, clean } from "../../convex/lib";
 import { isTelegram, tgUser, tgDisplayName } from "./telegram";
 
 /**
@@ -16,11 +17,9 @@ import { isTelegram, tgUser, tgDisplayName } from "./telegram";
 const CLIENT_KEY = "munch.clientId";
 const NAME_KEY = "munch.name";
 
-// Input caps — kept here as the single client-side source so input `maxLength`
-// props can't drift from each other (they mirror the server limits in convex/lib.ts).
-export const MAX_NAME = 20;
-export const MAX_TITLE = 40;
-export const MAX_TEXT = 60;
+// Input caps re-exported straight from the server module, so `maxLength`
+// props can never drift from what the mutations actually enforce.
+export { MAX_NAME, MAX_TEXT };
 
 function readClientId(): string {
   if (isTelegram && tgUser) return `tg:${tgUser.id}`;
@@ -34,35 +33,25 @@ function readClientId(): string {
 
 export const CLIENT_ID = readClientId();
 
-export function cleanName(name: string): string {
-  return name.replace(/\s+/g, " ").trim().slice(0, MAX_NAME);
-}
-
 /**
- * The display name, persisted to localStorage. We initialize state lazily from
- * storage and write through inside the setter (an event-driven action) — so
- * there's no `useEffect` syncing state to storage. That's the "you might not
- * need an effect" pattern: storage is written when the user acts, not reactively.
+ * The viewer's display name. Inside Telegram it's pre-seeded from the Mini App
+ * session; web guests pick one at the gate, persisted to localStorage. State
+ * initializes lazily from storage and writes through inside the setter (an
+ * event-driven action) — no `useEffect` syncing state to storage.
  */
-export function useDisplayName() {
+export function useViewerName() {
   const [name, setNameState] = useState(
-    () => (isTelegram ? cleanName(tgDisplayName(tgUser)) : null) || localStorage.getItem(NAME_KEY) || "",
+    () =>
+      (isTelegram ? clean(tgDisplayName(tgUser), MAX_NAME) : null) ||
+      localStorage.getItem(NAME_KEY) ||
+      "",
   );
 
   const setName = useCallback((next: string) => {
-    const value = cleanName(next);
+    const value = clean(next, MAX_NAME);
     setNameState(value);
     localStorage.setItem(NAME_KEY, value);
   }, []);
 
-  return [name, setName] as const;
-}
-
-/**
- * Who the current viewer is, for display + presence. Inside Telegram the name
- * is pre-seeded from the Mini App session; web guests pick one at the gate.
- */
-export function useViewerName() {
-  const [name, setName] = useDisplayName();
   return { name, setName };
 }

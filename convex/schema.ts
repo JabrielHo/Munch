@@ -33,7 +33,9 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_code", ["code"])
-    .index("by_tg_chat", ["tgChatId"]),
+    // closedAt second, so "the open room in this chat" is an index range —
+    // chats accumulate closed rounds forever and lookups must not scan them.
+    .index("by_tg_chat", ["tgChatId", "closedAt"]),
 
   options: defineTable({
     roomId: v.id("rooms"),
