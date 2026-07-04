@@ -16,6 +16,7 @@ import type * as lib from "../lib.js";
 import type * as presence from "../presence.js";
 import type * as rateLimits from "../rateLimits.js";
 import type * as rooms from "../rooms.js";
+import type * as telegram from "../telegram.js";
 
 import type {
   ApiFromModules,
@@ -32,6 +33,7 @@ declare const fullApi: ApiFromModules<{
   presence: typeof presence;
   rateLimits: typeof rateLimits;
   rooms: typeof rooms;
+  telegram: typeof telegram;
 }>;
 
 /**

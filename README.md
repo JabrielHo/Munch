@@ -134,12 +134,67 @@ Add your custom domain under the Pages project, then update the production
 
 ---
 
+## Telegram bot 🤖
+
+Munch also runs **inside a Telegram group chat** — no link-hopping: the chat is
+the room, votes are buttons, and the result lands as a message.
+
+- `/munch [title]` — start a round (the sender becomes the host)
+- `/add ramen` — add an option (or just **reply** to the munch message)
+- Tap an option's button to vote; tap again to unvote
+- `/spin` 🎡 / `/lock` 🔒 / `/end` — host-only, same rules as the web app
+
+Telegram rooms are ordinary rooms under the hood (participants are
+`tg:<user id>` clients), so every session also gets a **web link button** —
+the bridge to opening the same room in the browser or a future Mini App.
+
+### Set it up (one time, per deployment)
+
+**1. Create the bot** — talk to [@BotFather](https://t.me/BotFather): `/newbot`,
+pick a name and username, copy the token. Leave **group privacy ON** (the
+default) — the bot only needs commands and replies to its own messages.
+Optionally register the command list with `/setcommands`:
+
+```
+munch - Start a round
+add - Add a place or craving
+remove - Remove an option you added
+spin - Spin the wheel (host)
+lock - Lock the top pick (host)
+end - Close the round (host)
+help - How it works
+```
+
+**2. Give the deployment the token + a webhook secret** (any long random
+string — it's how we know updates really come from Telegram):
+
+```bash
+npx convex env set TELEGRAM_BOT_TOKEN 123456789:AA...your-token
+npx convex env set TELEGRAM_WEBHOOK_SECRET some-long-random-string
+```
+
+**3. Point Telegram at your deployment.** HTTP actions are served on the
+`.convex.site` domain (not `.convex.cloud` — check the Convex dashboard for
+your exact URL):
+
+```bash
+curl "https://api.telegram.org/bot<TOKEN>/setWebhook" \
+  -d "url=https://your-deployment.convex.site/telegram" \
+  -d "secret_token=some-long-random-string"
+```
+
+**4. Add the bot to your group** and send `/munch`. That's it — for production,
+repeat steps 2–3 with `--prod` env vars and the prod `.convex.site` URL.
+
+---
+
 ## Project layout
 
 ```
 convex/            Backend: schema, room logic, food classifier, auth, presence
   schema.ts        Tables: rooms, options, votes, presence (+ auth tables)
   rooms.ts         All queries + mutations (create/add/vote/spin/lock/reset)
+  telegram.ts      Telegram bot: /munch sessions, vote buttons, spin/lock
   foods.ts         Place-vs-craving classifier + your curated spots
   presence.ts      "who's here" heartbeat
 src/

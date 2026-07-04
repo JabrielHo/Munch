@@ -32,14 +32,14 @@ const ROOM_NAMES = [
 ];
 
 // —— Helpers ——
-function randomRoomName(): string {
+export function randomRoomName(): string {
   return ROOM_NAMES[Math.floor(Math.random() * ROOM_NAMES.length)];
 }
 
 /** Write the canonical "deciding" patch — one source of truth for both spin and
- *  lockTop, so they can't drift on which spin fields to set vs. clear. Deciding
- *  is final, so the room also closes here. */
-async function decide(
+ *  lockTop (web and Telegram), so they can't drift on which spin fields to set
+ *  vs. clear. Deciding is final, so the room also closes here. */
+export async function decide(
   ctx: MutationCtx,
   room: Doc<"rooms">,
   opts: {
@@ -63,6 +63,113 @@ async function decide(
   });
 }
 
+/** Pick a spin winner + the wheel geometry. Shared by the web mutation and the
+ *  Telegram bot so both surfaces decide identically. */
+export function computeSpin(options: Doc<"options">[]) {
+  const sorted = [...options].sort((a, b) => b.voteCount - a.voteCount || a.createdAt - b.createdAt);
+  const wheel = sorted.slice(0, WHEEL_MAX);
+  const idx = Math.floor(Math.random() * wheel.length);
+  const winner = wheel[idx];
+  const seg = 360 / wheel.length;
+  const jitter = (Math.random() - 0.5) * seg * 0.5;
+  // Rotate so the winning wedge's centre lands under the fixed top pointer.
+  const spinAngle = SPIN_TURNS * 360 - (idx * seg + seg / 2) + jitter;
+  return { winner, spinAngle, wheelOptionIds: wheel.map((o) => o._id) };
+}
+
+/** Pick the top-voted option, breaking ties at random. Shared with Telegram. */
+export function pickTop(options: Doc<"options">[]) {
+  const max = Math.max(...options.map((o) => o.voteCount));
+  const leaders = options.filter((o) => o.voteCount === max);
+  return leaders[Math.floor(Math.random() * leaders.length)];
+}
+
+/** Validate + insert an option. The single write path for both the web
+ *  mutation (addOption) and the Telegram bot, so caps, dedup, and
+ *  classification behave identically on both surfaces. */
+export async function insertOption(
+  ctx: MutationCtx,
+  room: Doc<"rooms">,
+  args: { text: string; name: string; clientId: string; userId?: Id<"users"> },
+) {
+  if (room.closedAt) throw new ConvexError("This room is closed.");
+  if (room.phase !== "collecting") {
+    throw new ConvexError("The decision's already happening — hang tight!");
+  }
+  const who = clean(args.name, MAX_NAME);
+  if (!who) throw new ConvexError("Add your name first.");
+  const value = clean(args.text, MAX_TEXT);
+  if (!value) throw new ConvexError("Type a place or a craving to add.");
+
+  const all = await ctx.db
+    .query("options")
+    .withIndex("by_room", (q) => q.eq("roomId", room._id))
+    .collect();
+  if (all.length >= MAX_OPTIONS_PER_ROOM) {
+    throw new ConvexError("That's plenty of options already!");
+  }
+  if (all.filter((o) => o.addedByClientId === args.clientId).length >= MAX_OPTIONS_PER_CLIENT) {
+    throw new ConvexError("You've added a bunch — let the others chip in!");
+  }
+  const dup = all.find((o) => o.text.toLowerCase() === value.toLowerCase());
+  if (dup) throw new ConvexError(`"${dup.text}" is already on the list — vote for it!`);
+
+  const c = classify(value);
+  const optionId = await ctx.db.insert("options", {
+    roomId: room._id,
+    text: value,
+    kind: c.kind,
+    emoji: c.emoji,
+    ...(c.cuisine ? { cuisine: c.cuisine } : {}),
+    ...(c.suggestedSpot ? { suggestedSpot: c.suggestedSpot } : {}),
+    addedByName: who,
+    addedByClientId: args.clientId,
+    ...(args.userId ? { addedByUserId: args.userId } : {}),
+    voteCount: 0,
+    createdAt: Date.now(),
+  });
+  return { optionId, text: value, emoji: c.emoji };
+}
+
+/** Toggle a participant's vote. The single vote path for web and Telegram. */
+export async function toggleVoteCore(
+  ctx: MutationCtx,
+  optionId: Id<"options">,
+  clientId: string,
+  name: string,
+) {
+  const option = await ctx.db.get(optionId);
+  if (!option) throw new ConvexError("That option's gone.");
+  const room = await ctx.db.get(option.roomId);
+  if (!room) throw new ConvexError("Room not found.");
+  if (room.closedAt) throw new ConvexError("This room is closed.");
+  if (room.phase !== "collecting") {
+    throw new ConvexError("Voting's closed — it's decision time!");
+  }
+  const who = clean(name, MAX_NAME);
+  if (!who) throw new ConvexError("Add your name first.");
+
+  const existing = await ctx.db
+    .query("votes")
+    .withIndex("by_option_client", (q) => q.eq("optionId", optionId).eq("voterClientId", clientId))
+    .unique();
+
+  if (existing) {
+    await ctx.db.delete(existing._id);
+    await ctx.db.patch(optionId, { voteCount: Math.max(0, option.voteCount - 1) });
+    return { voted: false, option, room };
+  }
+  await ctx.db.insert("votes", {
+    roomId: room._id,
+    optionId,
+    voterClientId: clientId,
+    voterName: who,
+    createdAt: Date.now(),
+  });
+  await ctx.db.patch(optionId, { voteCount: option.voteCount + 1 });
+  return { voted: true, option, room };
+}
+
 // ——————————————————————— Queries ———————————————————————
 
 /** Everything the room screen needs: room state + options sorted by votes. */
@@ -80,8 +187,10 @@ export const getRoom = query({
     const viewerIsHost = userId !== null && userId === room.hostUserId;
 
     // Resolve account holders' CURRENT names once, so a rename is reflected on
-    // everything they own — not just rows written after the rename.
-    const accountIds = new Set<Id<"users">>([room.hostUserId]);
+    // everything they own — not just rows written after the rename. Telegram
+    // rooms have no host account; their hostName snapshot is already canonical.
+    const accountIds = new Set<Id<"users">>();
+    if (room.hostUserId) accountIds.add(room.hostUserId);
     for (const r of rows) if (r.addedByUserId) accountIds.add(r.addedByUserId);
     const liveName = new Map<Id<"users">, string>();
     await Promise.all(
@@ -100,10 +209,13 @@ export const getRoom = query({
       addedByName: (addedByUserId && liveName.get(addedByUserId)) || rest.addedByName,
       mine: addedByClientId === clientId,
     }));
-    // Don't ship the host's internal account id to anonymous participants; show
-    // the host's live account name as the room's host label.
-    const { hostUserId, ...roomFields } = room;
-    const publicRoom = { ...roomFields, hostName: liveName.get(hostUserId) || room.hostName };
+    // Don't ship the host's internal account id (or Telegram chat/user ids) to
+    // anonymous participants; show the host's live account name as the label.
+    const { hostUserId, tgChatId, tgHostUserId, tgMessageId, ...roomFields } = room;
+    const publicRoom = {
+      ...roomFields,
+      hostName: (hostUserId && liveName.get(hostUserId)) || room.hostName,
+    };
     return { room: publicRoom, options, viewerIsHost };
   },
 });
@@ -179,44 +291,14 @@ export const addOption = mutation({
   },
   handler: async (ctx, { code, text, name, clientId }) => {
     const room = await requireRoom(ctx, code);
-    if (room.closedAt) throw new ConvexError("This room is closed.");
-    if (room.phase !== "collecting") {
-      throw new ConvexError("The decision's already happening — hang tight!");
-    }
     // If the adder is signed in (the host), tag the option with their account so
     // getRoom can show their CURRENT name even after a rename.
     const addedByUserId = await getAuthUserId(ctx);
-    const who = clean(name, MAX_NAME);
-    if (!who) throw new ConvexError("Add your name first.");
-    const value = clean(text, MAX_TEXT);
-    if (!value) throw new ConvexError("Type a place or a craving to add.");
-
-    const all = await ctx.db
-      .query("options")
-      .withIndex("by_room", (q) => q.eq("roomId", room._id))
-      .collect();
-    if (all.length >= MAX_OPTIONS_PER_ROOM) {
-      throw new ConvexError("That's plenty of options already!");
-    }
-    if (all.filter((o) => o.addedByClientId === clientId).length >= MAX_OPTIONS_PER_CLIENT) {
-      throw new ConvexError("You've added a bunch — let the others chip in!");
-    }
-    const dup = all.find((o) => o.text.toLowerCase() === value.toLowerCase());
-    if (dup) throw new ConvexError(`"${dup.text}" is already on the list — vote for it!`);
-
-    const c = classify(value);
-    const optionId = await ctx.db.insert("options", {
-      roomId: room._id,
-      text: value,
-      kind: c.kind,
-      emoji: c.emoji,
-      ...(c.cuisine ? { cuisine: c.cuisine } : {}),
-      ...(c.suggestedSpot ? { suggestedSpot: c.suggestedSpot } : {}),
-      addedByName: who,
-      addedByClientId: clientId,
-      ...(addedByUserId ? { addedByUserId } : {}),
-      voteCount: 0,
-      createdAt: Date.now(),
+    const { optionId } = await insertOption(ctx, room, {
+      text,
+      name,
+      clientId,
+      ...(addedByUserId ? { userId: addedByUserId } : {}),
     });
     return { optionId };
   },
@@ -252,36 +334,8 @@ export const removeOption = mutation({
 export const toggleVote = mutation({
   args: { optionId: v.id("options"), clientId: v.string(), name: v.string() },
   handler: async (ctx, { optionId, clientId, name }) => {
-    const option = await ctx.db.get(optionId);
-    if (!option) throw new ConvexError("That option's gone.");
-    const room = await ctx.db.get(option.roomId);
-    if (!room) throw new ConvexError("Room not found.");
-    if (room.closedAt) throw new ConvexError("This room is closed.");
-    if (room.phase !== "collecting") {
-      throw new ConvexError("Voting's closed — it's decision time!");
-    }
-    const who = clean(name, MAX_NAME);
-    if (!who) throw new ConvexError("Add your name first.");
-
-    const existing = await ctx.db
-      .query("votes")
-      .withIndex("by_option_client", (q) => q.eq("optionId", optionId).eq("voterClientId", clientId))
-      .unique();
-
-    if (existing) {
-      await ctx.db.delete(existing._id);
-      await ctx.db.patch(optionId, { voteCount: Math.max(0, option.voteCount - 1) });
-      return { voted: false };
-    }
-    await ctx.db.insert("votes", {
-      roomId: room._id,
-      optionId,
-      voterClientId: clientId,
-      voterName: who,
-      createdAt: Date.now(),
-    });
-    await ctx.db.patch(optionId, { voteCount: option.voteCount + 1 });
-    return { voted: true };
+    const { voted } = await toggleVoteCore(ctx, optionId, clientId, name);
+    return { voted };
   },
 });
 
@@ -298,22 +352,14 @@ export const spin = mutation({
       .collect();
     if (options.length === 0) throw new ConvexError("Add at least one option to spin.");
 
-    options.sort((a, b) => b.voteCount - a.voteCount || a.createdAt - b.createdAt);
-    const wheel = options.slice(0, WHEEL_MAX);
-
-    const idx = Math.floor(Math.random() * wheel.length);
-    const winner = wheel[idx];
-    const seg = 360 / wheel.length;
-    const jitter = (Math.random() - 0.5) * seg * 0.5;
-    // Rotate so the winning wedge's centre lands under the fixed top pointer.
-    const spinAngle = SPIN_TURNS * 360 - (idx * seg + seg / 2) + jitter;
+    const { winner, spinAngle, wheelOptionIds } = computeSpin(options);
 
     await decide(ctx, room, {
       mode: "spin",
       winnerId: winner._id,
       votes: winner.voteCount,
       spinAngle,
-      wheelOptionIds: wheel.map((o) => o._id),
+      wheelOptionIds,
     });
     return { winnerOptionId: winner._id };
   },
@@ -331,9 +377,7 @@ export const lockTop = mutation({
       .collect();
     if (options.length === 0) throw new ConvexError("Add at least one option first.");
 
-    const max = Math.max(...options.map((o) => o.voteCount));
-    const leaders = options.filter((o) => o.voteCount === max);
-    const winner = leaders[Math.floor(Math.random() * leaders.length)];
+    const winner = pickTop(options);
 
     await decide(ctx, room, {
       mode: "lock",

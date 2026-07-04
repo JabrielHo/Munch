@@ -8,6 +8,9 @@ import { v } from "convex/values";
  *    room and are the only one who can spin / lock / reset.
  *  - PARTICIPANTS join via the link with no account, identified by a per-browser
  *    `clientId` (random id kept in localStorage) plus a required display name.
+ *  - TELEGRAM rooms live in a group chat instead: the host is the Telegram user
+ *    who ran /munch (tgHostUserId, no `users` account), and participants are
+ *    Telegram users, folded into the clientId scheme as "tg:<telegram user id>".
  */
 export default defineSchema({
   // Tables that power Convex Auth (users, authSessions, authAccounts, …).
@@ -16,8 +19,12 @@ export default defineSchema({
   rooms: defineTable({
     code: v.string(), // random UUID in the share link — the only guard on the room
     title: v.string(),
-    hostUserId: v.id("users"),
+    hostUserId: v.optional(v.id("users")), // web host; absent for Telegram rooms
     hostName: v.string(),
+    // Telegram-native rooms — set together when the room was started via /munch.
+    tgChatId: v.optional(v.number()), // the group chat the session lives in
+    tgHostUserId: v.optional(v.number()), // Telegram user who ran /munch
+    tgMessageId: v.optional(v.number()), // the bot's live session message (edited in place)
     // "collecting" = people adding/voting; "deciding" = the synced reveal.
     phase: v.union(v.literal("collecting"), v.literal("deciding")),
     // How the current decision is being made (set when entering "deciding").
@@ -32,7 +39,8 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_code", ["code"])
-    .index("by_host", ["hostUserId"]),
+    .index("by_host", ["hostUserId"])
+    .index("by_tg_chat", ["tgChatId"]),
 
   options: defineTable({
     roomId: v.id("rooms"),
