@@ -1,7 +1,5 @@
 # Munch 🍜 — _Stop asking. Start eating._
 
-### Check it out [here](https://munch.jabrielho.com)
-
 A Telegram bot + Mini App that helps your group chat decide where to eat —
 **without leaving the conversation**. Someone sends `/munch`, everyone taps
 **🎡 Open Munch** to add a place **or** a craving (like "ramen" or "chicken
@@ -84,6 +82,13 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook" \
 - The host spins the wheel 🎡 or locks the top pick 🔒 from inside the app;
   ending the round early lives there too
 - The winner is announced in the chat, Maps link included
+- A chat can run **several rounds at once** — every `/munch` starts a new one
+  on its own live message (near-simultaneous `/munch`es merge into one round,
+  so a race to start doesn't split the group). Rounds stay live until their
+  host decides or ends them
+- **🗂 All rounds** (inside the app) lists the group's whole history — live
+  rounds and past outcomes, tap to open any. The starter can close their own
+  round from there; anyone can close a round once it's a day old
 
 ---
 

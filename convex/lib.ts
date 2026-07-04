@@ -26,6 +26,21 @@ export function mapsUrl(query: string): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 }
 
+/** A Telegram user's human name: full name, else username, else "". Shared by
+ *  the bot (chat rendering) and the Mini App (pre-seeding the display name). */
+export function tgFullName(u: {
+  first_name?: string;
+  last_name?: string;
+  username?: string;
+}): string {
+  return [u.first_name, u.last_name].filter(Boolean).join(" ") || u.username || "";
+}
+
+/** "vote"/"votes" — one pluralization for the bot message and the web cards. */
+export function voteWord(n: number): string {
+  return n === 1 ? "vote" : "votes";
+}
+
 /** Look up a room by its share code — an opaque token, matched exactly. */
 export async function roomByCode(ctx: QueryCtx | MutationCtx, code: string) {
   return ctx.db

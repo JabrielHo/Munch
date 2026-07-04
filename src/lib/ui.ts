@@ -39,3 +39,8 @@ export function humanError(err: unknown): string {
   const m = err instanceof Error ? err.message : String(err);
   return m.includes("Server Error") ? "Something went wrong — try again." : m;
 }
+
+/** The standard failure handler for user-initiated calls: `.catch(alertError)`. */
+export function alertError(err: unknown) {
+  alert(humanError(err));
+}

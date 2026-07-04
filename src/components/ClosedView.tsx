@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import type { PublicRoom, PublicOption } from "../lib/types";
 import { tileColor } from "../lib/ui";
+import { voteWord } from "../../convex/lib";
 
 /**
  * A closed room — read-only for everyone. The options and the final pick stay
@@ -14,7 +15,7 @@ export function ClosedView({ room, options }: { room: PublicRoom; options: Publi
     <div className="screen room">
       <header className="room-header">
         <div className="room-titlerow">
-          <Link to="/" className="room-back" aria-label="Back to menu">
+          <Link to={`/h/${room.code}`} className="room-back" aria-label="All rounds">
             ←
           </Link>
           <h1 className="room-title">
@@ -55,7 +56,7 @@ export function ClosedView({ room, options }: { room: PublicRoom; options: Publi
               </div>
               <div className="vote-static">
                 {o.voteCount}
-                <span>{o.voteCount === 1 ? "vote" : "votes"}</span>
+                <span>{voteWord(o.voteCount)}</span>
               </div>
             </div>
           ))}
@@ -64,8 +65,8 @@ export function ClosedView({ room, options }: { room: PublicRoom; options: Publi
 
       <div className="dock">
         <div className="dock-inner">
-          <Link to="/" className="btn btn--grape btn--block btn--lg">
-            ← Back to menu
+          <Link to={`/h/${room.code}`} className="btn btn--grape btn--block btn--lg">
+            ← All rounds
           </Link>
         </div>
       </div>

@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { mapsUrl, tileColor } from "../lib/ui";
+import { voteWord } from "../../convex/lib";
 import type { PublicRoom, PublicOption } from "../lib/types";
 import { Confetti } from "./Confetti";
 
@@ -33,7 +34,7 @@ export function ResultView({ room, options, reducedMotion }: Props) {
 
   const byVote = room.mode === "lock";
   const votes = room.decidedVotes ?? winner.voteCount;
-  const subline = byVote ? `🏆 The squad chose · ${votes} vote${votes === 1 ? "" : "s"}` : "🎡 The wheel decided";
+  const subline = byVote ? `🏆 The squad chose · ${votes} ${voteWord(votes)}` : "🎡 The wheel decided";
   const query = (winner.suggestedSpot ? `${winner.suggestedSpot} ` : "") + winner.text;
   const maps = mapsUrl(query);
 
@@ -59,8 +60,8 @@ export function ResultView({ room, options, reducedMotion }: Props) {
         <a className="btn btn--block btn--lg" href={maps} target="_blank" rel="noreferrer">
           Let's eat! 🎉
         </a>
-        <Link to="/" className="linklike">
-          ← Back to menu
+        <Link to={`/h/${room.code}`} className="linklike">
+          ← All rounds
         </Link>
       </div>
     </div>

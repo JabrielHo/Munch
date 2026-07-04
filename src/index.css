@@ -21,7 +21,6 @@
   --lime: #2fb877; /* live / done */
   --grape: #7c5cff; /* host / yours */
   --grape-press: #5b3fd6;
-  --sky: #4cc4e8; /* wheel wedge only */
 
   /* — Radii — */
   --r-chip: 999px;
@@ -213,13 +212,6 @@ input {
 .input:focus {
   border-color: var(--primary);
 }
-.input--code {
-  text-transform: uppercase;
-  letter-spacing: 0.22em;
-  font-family: var(--font-display);
-  font-weight: 600;
-  text-align: center;
-}
 
 /* ——— Cards ——— */
 .card {
@@ -256,84 +248,6 @@ input {
   color: var(--ink-soft);
   font-weight: 700;
 }
-.divider {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: var(--ink-soft);
-  font-size: 13px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-}
-.divider::before,
-.divider::after {
-  content: "";
-  flex: 1;
-  height: 2px;
-  background: var(--hairline);
-  border-radius: 2px;
-}
-.join-row {
-  display: flex;
-  gap: 10px;
-}
-.join-row .input {
-  flex: 1;
-}
-.home-footer {
-  text-align: center;
-  font-size: 13px;
-  color: var(--ink-soft);
-  padding-top: 4px;
-}
-.hosting-as {
-  text-align: center;
-  font-weight: 700;
-  color: var(--ink-soft);
-  padding: 6px;
-}
-.hosting-as strong {
-  color: var(--ink);
-}
-
-.recent {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 0;
-}
-.recent-label {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--ink-soft);
-}
-.recent-scroll {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 216px;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  padding-right: 2px;
-}
-.recent-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: var(--card);
-  border: 2px solid var(--hairline);
-  border-radius: var(--r-input);
-  padding: 12px 14px;
-  text-decoration: none;
-  color: var(--ink);
-  font-weight: 700;
-}
-.recent-item span[aria-hidden] {
-  color: var(--grape);
-  font-weight: 800;
-}
-
 /* ——— Sign in ——— */
 .signin {
   display: flex;
@@ -342,22 +256,6 @@ input {
 }
 .signin h2 {
   font-size: 20px;
-}
-.signin-error {
-  background: #ffe9e3;
-  color: var(--primary-press);
-  border-radius: 12px;
-  padding: 10px 12px;
-  font-size: 14px;
-  font-weight: 700;
-}
-.signin-toggle {
-  background: none;
-  border: none;
-  color: var(--grape);
-  font-weight: 800;
-  font-size: 14px;
-  padding: 4px;
 }
 .linklike {
   background: none;
@@ -516,17 +414,6 @@ input {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-}
-
-/* name chip */
-.name-chip {
-  border: 2px solid var(--grape);
-  color: var(--grape);
-  background: transparent;
-  border-radius: var(--r-chip);
-  padding: 8px 14px;
-  font-weight: 800;
-  font-size: 13px;
 }
 
 /* ——— Option list ——— */
@@ -765,32 +652,23 @@ input {
   padding: 6px;
   animation: live-pulse 2.4s ease-in-out infinite;
 }
-.host-badge {
-  display: inline-block;
-  background: var(--grape);
-  color: #fff;
-  border-radius: var(--r-chip);
-  padding: 2px 9px;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-/* inline name prompt (appears on first add/vote) */
-.name-prompt {
-  background: var(--card);
-  border-radius: var(--r-card);
-  box-shadow: var(--shadow-card);
-  padding: 14px;
+/* ============================================================
+   HISTORY — all of a group's rounds
+   ============================================================ */
+/* The tappable part of a history row (emoji + title + meta); the status badge
+   and Close sit outside it so taps can't misfire into navigation. */
+.history-link {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  animation: pop-in 240ms var(--ease-pop) both;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
 }
-.name-prompt h3 {
-  font-size: 17px;
-}
-.name-prompt .add-bar {
-  margin: 0;
+.history-close {
+  flex: 0 0 auto;
+  font-size: 13px;
 }
 
 /* ============================================================
@@ -871,22 +749,9 @@ input {
   font-size: 26px;
   box-shadow: 0 4px 10px -2px rgba(43, 33, 24, 0.25);
 }
-.spin-btn {
-  font-size: 22px;
-  padding: 18px 44px;
-  letter-spacing: 0.04em;
-}
 .decide-guest {
   font-weight: 800;
   color: var(--ink-soft);
-}
-.skip {
-  background: none;
-  border: none;
-  color: var(--ink-soft);
-  font-weight: 700;
-  text-decoration: underline;
-  font-size: 13px;
 }
 
 /* lock-mode suspense dots */

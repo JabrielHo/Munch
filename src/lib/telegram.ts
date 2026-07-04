@@ -14,6 +14,8 @@
  * Telegram's HMAC before acting.
  */
 
+import { tgFullName } from "../../convex/lib";
+
 export type TgWebAppUser = {
   id: number;
   first_name?: string;
@@ -48,8 +50,7 @@ export const tgStartParam: string | null = isTelegram
 export const tgInitData: string = isTelegram ? webApp!.initData : "";
 
 export function tgDisplayName(user: TgWebAppUser | null): string {
-  if (!user) return "";
-  return [user.first_name, user.last_name].filter(Boolean).join(" ") || user.username || "";
+  return user ? tgFullName(user) : "";
 }
 
 /** Tell Telegram we've rendered (dismisses its loader) and use the full pane. */

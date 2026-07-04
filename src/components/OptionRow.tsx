@@ -5,14 +5,13 @@ import type { PublicOption } from "../lib/types";
 
 interface Props {
   option: PublicOption;
-  mine: boolean;
   voted: boolean;
   removable: boolean;
   onVote: (id: Id<"options">) => void;
   onRemove: (id: Id<"options">) => void;
 }
 
-export function OptionRow({ option, mine, voted, removable, onVote, onRemove }: Props) {
+export function OptionRow({ option, voted, removable, onVote, onRemove }: Props) {
   // Local, transient animation triggers — keyed remounts replay the CSS.
   const [bump, setBump] = useState(0);
   const [floatId, setFloatId] = useState<number | null>(null);
@@ -24,7 +23,7 @@ export function OptionRow({ option, mine, voted, removable, onVote, onRemove }: 
   }
 
   return (
-    <div className={`option-row${mine ? " option-row--mine" : ""}`}>
+    <div className={`option-row${option.mine ? " option-row--mine" : ""}`}>
       <div className="option-emoji" style={{ background: tileColor(option._id) }}>
         {option.emoji}
       </div>

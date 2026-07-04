@@ -16,6 +16,18 @@ import { isTelegram, tgUser, tgDisplayName } from "./telegram";
  */
 const CLIENT_KEY = "munch.clientId";
 const NAME_KEY = "munch.name";
+const LAST_CODE_KEY = "munch.lastCode";
+
+/** Remember the room most recently opened on this device — it's the anchor
+ *  that lets a bare Mini App open (bot profile / direct link, no chat message)
+ *  land on that group's All-rounds page instead of a dead end. */
+export function rememberRoomCode(code: string) {
+  localStorage.setItem(LAST_CODE_KEY, code);
+}
+
+export function lastRoomCode(): string | null {
+  return localStorage.getItem(LAST_CODE_KEY);
+}
 
 // Input caps re-exported straight from the server module, so `maxLength`
 // props can never drift from what the mutations actually enforce.

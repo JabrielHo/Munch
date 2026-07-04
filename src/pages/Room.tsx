@@ -7,6 +7,7 @@ import { CollectView } from "../components/CollectView";
 import { DecideView } from "../components/DecideView";
 import { ClosedView } from "../components/ClosedView";
 import { NameGate } from "../components/NameGate";
+import { LoadingScreen } from "../components/LoadingScreen";
 
 const HEARTBEAT_MS = 1_500;
 
@@ -55,13 +56,7 @@ export default function Room() {
   }, [code, leave]);
 
   if (data === undefined) {
-    return (
-      <div className="screen">
-        <div className="loading">
-          <div className="spinner" />
-        </div>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   if (data === null) {

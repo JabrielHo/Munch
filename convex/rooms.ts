@@ -52,6 +52,11 @@ export function isTgHost(room: Doc<"rooms">, clientId: string): boolean {
   return clientId === `tg:${room.tgHostUserId}`;
 }
 
+/** After this age, ANYONE in the group may close a lingering open round from
+ *  the history screen (the starter can always close their own). Enforced in
+ *  telegram.ts against the signed Mini App identity. */
+export const OLD_ROUND_CLOSE_MS = 24 * 60 * 60 * 1000;
+
 const CHAT_REFRESH_DEBOUNCE_MS = 2000;
 
 /** Mini App activity should show up on the chat's scoreboard message — but a
@@ -240,6 +245,39 @@ export const getRoom = query({
       viewerIsHost,
       myVoteIds: myVotes.map((vote) => vote.optionId),
     };
+  },
+});
+
+/** Every round this room's group chat has run — live ones first-class, and
+ *  outcomes for the decided ones. The room code is the capability: holding
+ *  any one round's code (you got it from the chat) unlocks the chat's list. */
+export const groupHistory = query({
+  args: { code: v.string(), clientId: v.string() },
+  handler: async (ctx, { code, clientId }) => {
+    const anchor = await requireRoom(ctx, code);
+    const rooms = await ctx.db
+      .query("rooms")
+      .withIndex("by_tg_chat", (q) => q.eq("tgChatId", anchor.tgChatId))
+      .collect();
+    rooms.sort((a, b) => b.createdAt - a.createdAt);
+    const now = Date.now();
+    return Promise.all(
+      rooms.slice(0, 50).map(async (r) => {
+        const winner = r.winnerOptionId ? await ctx.db.get(r.winnerOptionId) : null;
+        return {
+          code: r.code,
+          title: r.title,
+          hostName: r.hostName,
+          createdAt: r.createdAt,
+          closedAt: r.closedAt,
+          winner: winner ? { emoji: winner.emoji, text: winner.text } : null,
+          decidedVotes: r.decidedVotes,
+          mine: isTgHost(r, clientId),
+          // UI hint only — the close action re-verifies against signed initData.
+          closable: !r.closedAt && (isTgHost(r, clientId) || now - r.createdAt > OLD_ROUND_CLOSE_MS),
+        };
+      }),
+    );
   },
 });
 

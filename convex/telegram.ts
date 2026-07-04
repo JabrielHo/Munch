@@ -10,15 +10,26 @@ import {
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { MAX_NAME, MAX_TITLE, byVotesDesc, clean, mapsUrl, requireRoom } from "./lib";
-import { decide, computeSpin, pickTop, randomRoomName } from "./rooms";
+import {
+  MAX_NAME,
+  MAX_TITLE,
+  byVotesDesc,
+  clean,
+  mapsUrl,
+  requireRoom,
+  tgFullName,
+  voteWord,
+} from "./lib";
+import { decide, computeSpin, pickTop, randomRoomName, OLD_ROUND_CLOSE_MS } from "./rooms";
 
 /**
  * Munch as a Telegram bot, app-first: the chat is the notice board, the Mini
  * App is where everything happens.
  *
  *  - /munch posts a live "session message": the round's title, a vote tally
- *    that the bot edits in place, and one button — 🎡 Open Munch.
+ *    that the bot edits in place, and one button — 🎡 Open Munch. A chat can
+ *    run several rounds at once, each on its own message, live until decided
+ *    or ended.
  *  - Adding, voting, and the host's spin/lock/end all live in the Mini App
  *    (participants are clientId "tg:<user id>"; host actions verify Telegram's
  *    signed initData). App activity re-renders the tally via a debounced
@@ -53,6 +64,11 @@ type TgUpdate = { message?: TgMessage; callback_query?: TgCallbackQuery };
 
 const SPIN_SUSPENSE_MS = 4000; // drumroll before the winner is revealed
 const TALLY_MAX = 8; // options shown in the chat scoreboard
+// /munch always starts a new round — a chat can run several at once, each on
+// its own live scoreboard message, and rounds stay live until decided or
+// ended. One guard keeps that sane: a group racing to type /munch merges
+// into ONE round instead of N.
+const MUNCH_MERGE_WINDOW_MS = 90 * 1000;
 
 // —— Small helpers ——
 
@@ -63,8 +79,7 @@ export function deployEnv(): Record<string, string | undefined> {
 }
 
 function displayName(from: TgUser): string {
-  const full = [from.first_name, from.last_name].filter(Boolean).join(" ");
-  return clean(full, MAX_NAME) || clean(from.username ?? "", MAX_NAME) || "Someone";
+  return clean(tgFullName(from), MAX_NAME) || "Someone";
 }
 
 function botToken(): string {
@@ -111,9 +126,9 @@ function esc(s: string): string {
 const HELP = [
   "🍽 <b>Munch</b> — decide where to eat, without leaving the chat.",
   "",
-  "/munch <i>[title]</i> — start a round",
+  "/munch <i>[title]</i> — start a round (run it again for another; each round lives on its own message)",
   "",
-  "Then tap 🎡 <b>Open Munch</b> on the round's message: add cravings, vote, and — if you started the round — spin the wheel or lock the top pick. The tally updates here live, and the winner lands right back in the chat.",
+  "Then tap 🎡 <b>Open Munch</b> on a round's message: add cravings, vote, and — if you started the round — spin the wheel or lock the top pick. The tally updates here live, and the winner lands right back in the chat.",
 ].join("\n");
 
 const PRIVATE_HELP =
@@ -122,10 +137,10 @@ const PRIVATE_HELP =
 
 // —— DB helpers (shared by the internal mutations/queries below) ——
 
-/** The one live session in a chat, if any (newest un-closed Telegram room).
- *  closedAt is part of the index, so this only ever touches open rooms — a
- *  chat accumulates closed rounds forever and we never want to load those. */
-async function activeSession(ctx: QueryCtx | MutationCtx, chatId: number) {
+/** The newest open round in a chat (several may be live; this is only used to
+ *  merge near-simultaneous /munch races). closedAt is part of the index, so
+ *  this never touches the chat's ever-growing pile of closed rounds. */
+async function newestOpenRound(ctx: QueryCtx | MutationCtx, chatId: number) {
   return ctx.db
     .query("rooms")
     .withIndex("by_tg_chat", (q) => q.eq("tgChatId", chatId).eq("closedAt", undefined))
@@ -135,23 +150,31 @@ async function activeSession(ctx: QueryCtx | MutationCtx, chatId: number) {
 
 const HOST_ACT = v.union(v.literal("spin"), v.literal("lock"), v.literal("end"));
 
-/** The one host-action implementation: gate on the starter, then end / spin /
- *  lock. Only reachable through the Mini App, whose caller has already
- *  verified the Telegram identity against the signed initData. */
+/** The one host-action implementation. Only reachable through the Mini App,
+ *  whose caller has already verified the Telegram identity against the signed
+ *  initData. Permission model: spin/lock are the starter's alone; "end" is the
+ *  starter's anytime — and, because rounds never auto-expire, ANYONE's once
+ *  the round has grown old (the History screen's cleanup power). */
 async function applyHostAction(
   ctx: MutationCtx,
   room: Doc<"rooms">,
   tgUserId: number,
   act: "spin" | "lock" | "end",
 ) {
-  if (room.tgHostUserId !== tgUserId) {
-    throw new ConvexError("Only the person who started this munch can do that.");
-  }
   if (room.closedAt) throw new ConvexError("This room is closed.");
+  const isStarter = room.tgHostUserId === tgUserId;
 
   if (act === "end") {
+    if (!isStarter && Date.now() - room.createdAt < OLD_ROUND_CLOSE_MS) {
+      throw new ConvexError(
+        "Only the person who started this round can close it — anyone can, once it's a day old.",
+      );
+    }
     await ctx.db.patch(room._id, { closedAt: Date.now() });
   } else {
+    if (!isStarter) {
+      throw new ConvexError("Only the person who started this munch can do that.");
+    }
     const options = await roomOptions(ctx, room._id);
     if (options.length === 0) throw new ConvexError("Add at least one option first.");
     if (act === "spin") {
@@ -208,9 +231,11 @@ export const startSession = internalMutation({
     title: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const existing = await activeSession(ctx, args.chatId);
-    if (existing) {
-      return { roomId: existing._id, existing: true, oldMessageId: existing.tgMessageId };
+    // Merge a /munch race: several people starting "the" round within seconds
+    // of each other mean one round, not several.
+    const latest = await newestOpenRound(ctx, args.chatId);
+    if (latest && Date.now() - latest.createdAt < MUNCH_MERGE_WINDOW_MS) {
+      return { roomId: latest._id, reusedMessageId: latest.tgMessageId };
     }
     const roomId = await ctx.db.insert("rooms", {
       // The code rides in the Open Munch button's startapp param — it's how the
@@ -226,7 +251,7 @@ export const startSession = internalMutation({
       phase: "collecting",
       createdAt: Date.now(),
     });
-    return { roomId, existing: false, oldMessageId: undefined };
+    return { roomId, reusedMessageId: undefined };
   },
 });
 
@@ -294,7 +319,7 @@ function resultText(state: SessionState): string {
     `🎉 <b>${esc(winner.text)}</b> it is!`,
     room.mode === "spin"
       ? "The wheel has spoken 🎡"
-      : `Locked in with ${votes} vote${votes === 1 ? "" : "s"} 🔒`,
+      : `Locked in with ${votes} ${voteWord(votes)} 🔒`,
   ];
   if (winner.suggestedSpot) {
     lines.push(
@@ -567,12 +592,12 @@ async function onMessage(ctx: ActionCtx, msg: TgMessage) {
             roomId: res.roomId,
             messageId: sent.message_id,
           });
-          // Point the superseded copy at the new one so a stale scoreboard
+          // Point the superseded copy at the new one so a duplicate scoreboard
           // doesn't linger mid-chat.
-          if (res.oldMessageId && res.oldMessageId !== sent.message_id) {
+          if (res.reusedMessageId && res.reusedMessageId !== sent.message_id) {
             await tg("editMessageText", {
               chat_id: chat.id,
-              message_id: res.oldMessageId,
+              message_id: res.reusedMessageId,
               text: "⬇️ This munch moved to a newer message below.",
             });
           }

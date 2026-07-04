@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { isTelegram, tgStartParam, tgReady } from "../lib/telegram";
+import { LoadingScreen } from "../components/LoadingScreen";
 
 /**
  * The Mini App entry point — the URL registered with BotFather. Telegram opens
@@ -45,11 +46,5 @@ export default function TgEntry() {
     );
   }
 
-  return (
-    <div className="screen">
-      <div className="loading">
-        <div className="spinner" />
-      </div>
-    </div>
-  );
+  return <LoadingScreen />;
 }

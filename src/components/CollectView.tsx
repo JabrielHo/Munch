@@ -6,7 +6,7 @@ import type { Id } from "../../convex/_generated/dataModel";
 import { CLIENT_ID, MAX_TEXT } from "../lib/identity";
 import { isTelegram, tgInitData } from "../lib/telegram";
 import { useClipboard } from "../lib/hooks";
-import { avatarColor, humanError, shareUrl } from "../lib/ui";
+import { alertError, avatarColor, shareUrl } from "../lib/ui";
 import type { PublicRoom, PublicOption } from "../lib/types";
 import { OptionRow } from "./OptionRow";
 
@@ -28,9 +28,7 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
   // Host controls only render for the Telegram starter (inside the Mini App),
   // and every host action is verified server-side against the signed initData.
   function hostAct(act: "spin" | "lock" | "end") {
-    miniAppHost({ initData: tgInitData, code: room.code, act }).catch((err) =>
-      alert(humanError(err)),
-    );
+    miniAppHost({ initData: tgInitData, code: room.code, act }).catch(alertError);
   }
 
   const [text, setText] = useState("");
@@ -63,15 +61,15 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
     if (!value) return;
     addOption({ code: room.code, text: value, name, clientId: CLIENT_ID })
       .then(() => setText(""))
-      .catch((err) => alert(humanError(err)));
+      .catch(alertError);
   }
 
   function onVote(optionId: Id<"options">) {
-    toggleVote({ optionId, clientId: CLIENT_ID, name }).catch((err) => alert(humanError(err)));
+    toggleVote({ optionId, clientId: CLIENT_ID, name }).catch(alertError);
   }
 
   function onRemove(optionId: Id<"options">) {
-    removeOption({ optionId, clientId: CLIENT_ID }).catch((err) => alert(humanError(err)));
+    removeOption({ optionId, clientId: CLIENT_ID }).catch(alertError);
   }
 
   const leader = options[0];
@@ -85,12 +83,10 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
     >
       <header className="room-header">
         <div className="room-titlerow">
-          {/* Inside Telegram there's no "menu" to go back to — the chat is home. */}
-          {!isTelegram && (
-            <Link to="/" className="room-back" aria-label="Back to menu">
-              ←
-            </Link>
-          )}
+          {/* Back = up: the group's round history. */}
+          <Link to={`/h/${room.code}`} className="room-back" aria-label="All rounds">
+            ←
+          </Link>
           <h1 className="room-title">
             <span>{room.title}</span>
           </h1>
@@ -127,7 +123,6 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
             <OptionRow
               key={o._id}
               option={o}
-              mine={o.mine}
               voted={votedIds.has(o._id)}
               removable={o.mine || viewerIsHost}
               onVote={onVote}
