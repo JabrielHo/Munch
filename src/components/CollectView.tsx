@@ -34,6 +34,11 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
   }
 
   const [text, setText] = useState("");
+  // While the add input is focused, the on-screen keyboard pushes the fixed
+  // dock up over the content — so collapse the dock to just the input row
+  // (host controls and hints come back on blur). The ResizeObserver below
+  // re-measures, so the content padding follows automatically.
+  const [typing, setTyping] = useState(false);
   const { copied, copy } = useClipboard();
 
   // The dock is fixed to the bottom; reserve exactly its height as bottom
@@ -141,6 +146,8 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
               placeholder="Add a place or a craving…"
               value={text}
               onChange={(e) => setText(e.target.value)}
+              onFocus={() => setTyping(true)}
+              onBlur={() => setTyping(false)}
               maxLength={MAX_TEXT}
             />
             <button className="fab" type="submit" disabled={!text.trim()} aria-label="Add option">
@@ -148,7 +155,7 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
             </button>
           </form>
 
-          {viewerIsHost ? (
+          {typing ? null : viewerIsHost ? (
             <>
               <div className="host-controls">
                 <button
