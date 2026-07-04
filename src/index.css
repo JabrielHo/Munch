@@ -810,6 +810,15 @@ input {
   aspect-ratio: 1;
   --r: calc(min(86vw, 340px) / 2);
 }
+/* The resting drop shadow lives on a NON-rotating layer. On .wheel itself it
+   spins with the disc (bottom → side → top), which reads as a wobble. */
+.wheel-wrap::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: 0 10px 0 rgba(43, 33, 24, 0.1);
+}
 .wheel-pointer {
   position: absolute;
   top: -6px;
@@ -827,9 +836,8 @@ input {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  box-shadow:
-    0 10px 0 rgba(43, 33, 24, 0.1),
-    inset 0 0 0 6px #fff;
+  /* Only the symmetric inset ring may rotate with the disc — see .wheel-wrap::before. */
+  box-shadow: inset 0 0 0 6px #fff;
   overflow: hidden;
 }
 .wheel-emoji {
