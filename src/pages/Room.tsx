@@ -2,11 +2,10 @@ import { useEffect } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { CLIENT_ID, useViewerName } from "../lib/identity";
+import { CLIENT_ID, VIEWER_NAME, rememberRoomCode } from "../lib/identity";
 import { CollectView } from "../components/CollectView";
 import { DecideView } from "../components/DecideView";
 import { ClosedView } from "../components/ClosedView";
-import { NameGate } from "../components/NameGate";
 import { LoadingScreen } from "../components/LoadingScreen";
 
 const HEARTBEAT_MS = 1_500;
@@ -17,7 +16,7 @@ export default function Room() {
   const data = useQuery(api.rooms.getRoom, { code, clientId: CLIENT_ID });
   const presence = useQuery(api.presence.here, { code });
 
-  const { name, setName } = useViewerName();
+  const name = VIEWER_NAME;
   const heartbeat = useMutation(api.presence.heartbeat);
   const leave = useMutation(api.presence.leave);
 
@@ -55,6 +54,13 @@ export default function Room() {
     };
   }, [code, leave]);
 
+  // Anchor for bare Mini App opens (no startapp param): remember the room so
+  // TgEntry can land on this group's history instead of a dead end.
+  const found = data != null;
+  useEffect(() => {
+    if (code && found) rememberRoomCode(code);
+  }, [code, found]);
+
   if (data === undefined) {
     return <LoadingScreen />;
   }
@@ -64,10 +70,10 @@ export default function Room() {
       <div className="screen home">
         <div className="home-top">
           <div className="wordmark">Munch&nbsp;🍜</div>
-          <div className="tagline">That room isn't here.</div>
+          <div className="tagline">That round isn't here.</div>
         </div>
         <Link className="btn btn--block btn--lg" to="/">
-          Back to start
+          What is Munch?
         </Link>
       </div>
     );
@@ -86,12 +92,6 @@ export default function Room() {
 
   if (room.closedAt) {
     return <ClosedView room={room} options={options} />;
-  }
-
-  // Telegram viewers arrive with a name (from the Mini App session); only web
-  // guests without one hit the gate.
-  if (!name) {
-    return <NameGate room={room} onSubmit={setName} />;
   }
 
   return (

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { isTelegram, tgStartParam, tgReady } from "../lib/telegram";
+import { lastRoomCode } from "../lib/identity";
 import { LoadingScreen } from "../components/LoadingScreen";
 
 /**
@@ -13,9 +14,15 @@ export default function TgEntry() {
 
   useEffect(() => {
     tgReady();
-    if (isTelegram && tgStartParam) {
+    if (!isTelegram) return;
+    if (tgStartParam) {
       navigate(`/r/${tgStartParam}`, { replace: true });
+      return;
     }
+    // Bare open (bot profile / direct link without startapp): land on the
+    // history of the group this device last munched with.
+    const last = lastRoomCode();
+    if (last) navigate(`/h/${last}`, { replace: true });
   }, [navigate]);
 
   if (!isTelegram) {
@@ -26,13 +33,15 @@ export default function TgEntry() {
           <div className="tagline">This door only opens from inside Telegram.</div>
         </div>
         <Link className="btn btn--block btn--lg" to="/">
-          Go to the web app
+          What is Munch?
         </Link>
       </div>
     );
   }
 
-  if (!tgStartParam) {
+  // The effect above handles both navigations; this message is only for a
+  // truly bare open on a device that has never had a room to remember.
+  if (!tgStartParam && !lastRoomCode()) {
     return (
       <div className="screen home">
         <div className="home-top">

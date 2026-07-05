@@ -8,12 +8,12 @@ import { v } from "convex/values";
  *  - PARTICIPANTS are Telegram users, identified as clientId
  *    "tg:<telegram user id>" — the chat's vote buttons and the Mini App
  *    resolve to the same id, so one person is one voter on both surfaces.
- *  - GUESTS without Telegram can still join through the room's web link with a
- *    per-browser random clientId plus a display name.
+ *  - Browser sessions without Telegram (dev/testing) fall back to a
+ *    per-browser random clientId; there is no standalone web flow.
  */
 export default defineSchema({
   rooms: defineTable({
-    code: v.string(), // random UUID in the web/Mini App link — unguessable
+    code: v.string(), // random UUID in the Mini App startapp link — unguessable
     title: v.string(),
     hostName: v.string(), // snapshot of the starter's Telegram name
     tgChatId: v.number(), // the group chat the session lives in

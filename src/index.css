@@ -102,15 +102,6 @@ input {
   flex-direction: column;
 }
 
-.stack {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.muted {
-  color: var(--ink-soft);
-}
 .center {
   text-align: center;
 }
@@ -248,15 +239,6 @@ input {
   color: var(--ink-soft);
   font-weight: 700;
 }
-/* ——— Sign in ——— */
-.signin {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.signin h2 {
-  font-size: 20px;
-}
 .linklike {
   background: none;
   border: none;
@@ -354,33 +336,6 @@ input {
   justify-content: space-between;
   gap: 10px;
   margin-top: 10px;
-}
-
-/* share chip */
-.share-chip {
-  border: 2px solid var(--hairline);
-  background: var(--card);
-  color: var(--ink);
-  border-radius: var(--r-chip);
-  padding: 9px 16px;
-  font-weight: 800;
-  font-size: 14px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  transition:
-    background 160ms ease,
-    color 160ms ease,
-    border-color 160ms ease,
-    transform 120ms var(--ease-pop);
-}
-.share-chip:active {
-  transform: scale(0.96);
-}
-.share-chip--done {
-  background: var(--lime);
-  border-color: var(--lime);
-  color: #fff;
 }
 
 /* presence */

@@ -24,8 +24,8 @@ export function ResultView({ room, options, reducedMotion }: Props) {
           <div className="result-name">Hmm, that pick vanished.</div>
         </div>
         <div className="result-actions">
-          <Link to="/" className="btn btn--grape btn--block">
-            ← Back to menu
+          <Link to={`/h/${room.code}`} className="btn btn--grape btn--block">
+            ← All rounds
           </Link>
         </div>
       </div>

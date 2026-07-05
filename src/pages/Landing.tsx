@@ -1,7 +1,6 @@
 /**
- * The web root is just a signpost now — Munch lives in Telegram. Room links
- * (/r/<code>) still work for guests without Telegram; everything else happens
- * in the group chat and the Mini App.
+ * The web root is just a signpost — Munch lives in Telegram. The hosted site
+ * exists to serve the Mini App; there is no standalone web experience.
  */
 export default function Landing() {
   // Optional: set VITE_TELEGRAM_BOT_LINK (e.g. https://t.me/YourMunchBot) at
@@ -22,7 +21,6 @@ export default function Landing() {
           Open the bot in Telegram
         </a>
       )}
-      <p className="muted">Got a room link from a friend? Just open it — that still works.</p>
     </div>
   );
 }

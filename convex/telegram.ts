@@ -13,6 +13,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import {
   MAX_NAME,
   MAX_TITLE,
+  OLD_ROUND_CLOSE_MS,
   byVotesDesc,
   clean,
   mapsUrl,
@@ -20,7 +21,7 @@ import {
   tgFullName,
   voteWord,
 } from "./lib";
-import { decide, computeSpin, pickTop, randomRoomName, OLD_ROUND_CLOSE_MS } from "./rooms";
+import { decide, computeSpin, pickTop, randomRoomName } from "./rooms";
 
 /**
  * Munch as a Telegram bot, app-first: the chat is the notice board, the Mini
@@ -238,8 +239,8 @@ export const startSession = internalMutation({
       return { roomId: latest._id, reusedMessageId: latest.tgMessageId };
     }
     const roomId = await ctx.db.insert("rooms", {
-      // The code rides in the Open Munch button's startapp param — it's how the
-      // Mini App (and web guests via the room link) find this room.
+      // The code rides in the Open Munch button's startapp param — it's how
+      // the Mini App finds this room.
       code: crypto.randomUUID(),
       title:
         clean(args.title ?? "", MAX_TITLE) ||
@@ -362,14 +363,11 @@ function renderSession(state: SessionState): {
   const footer = `<i>Tap 🎡 Open Munch to add cravings &amp; vote. ${esc(room.hostName)} spins the wheel.</i>`;
 
   // The Mini App opens in-place over the chat, carrying the room code via
-  // startapp. Fall back to the plain web link while no Mini App is registered.
+  // startapp (registered with BotFather; see README).
   const miniAppLink = deployEnv().TELEGRAM_MINIAPP_LINK; // e.g. https://t.me/MunchBot/munch
-  const siteUrl = deployEnv().SITE_URL;
   const button = miniAppLink
     ? { text: "🎡 Open Munch", url: `${miniAppLink.replace(/\/$/, "")}?startapp=${room.code}` }
-    : siteUrl
-      ? { text: "🎡 Open Munch", url: `${siteUrl.replace(/\/$/, "")}/r/${room.code}` }
-      : null;
+    : null;
 
   return {
     text: `${header}\n\n${body}\n\n${footer}`,

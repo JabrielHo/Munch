@@ -119,9 +119,9 @@ the app as `start_param`, and the `/tg` route forwards into the room.
 
 **Mini App dev loop:** `npm run dev` serves the app at localhost, but Telegram
 needs a public HTTPS URL — deploy to Pages (or tunnel) to test inside Telegram.
-Outside Telegram the app still runs as a plain website: room links
-(`/(your-domain)/r/CODE`) keep working for friends without Telegram (they just
-pick a display name).
+For quick browser-based dev without Telegram, open a room URL directly and seed
+`localStorage`: `munch.clientId` (`tg:<user id>` to act as that member) and
+`munch.name` — the app has no other web entrance; Telegram is the front door.
 
 ### Make the food suggestions real for your city
 
@@ -167,13 +167,9 @@ hard refresh.
 
 ### 3. Point your domain
 
-Add your custom domain under the Pages project, set the BotFather **Web App
-URL** to `https://your-domain.com/tg`, and set `SITE_URL` on the prod
-deployment to match (it powers the web-link fallback button):
-
-```bash
-npx convex env set --prod SITE_URL https://your-domain.com
-```
+Add your custom domain under the Pages project and set the BotFather **Web App
+URL** to `https://your-domain.com/tg`. That URL is how the bot's 🎡 Open Munch
+button opens the Mini App over the chat.
 
 ---
 
@@ -189,8 +185,9 @@ convex/            Backend: schema, room logic, Telegram bot, food classifier
   presence.ts      "who's here" heartbeat (room screen)
   http.ts          /telegram webhook route + presence leave beacon
 src/
-  pages/           Landing, Room, TgEntry (Mini App entry)
-  components/      CollectView, OptionRow, SpinWheel, DecideView, ResultView, …
+  pages/           Landing, Room, History, TgEntry (Mini App entry)
+  components/      CollectView, OptionRow, SpinWheel, DecideView, ResultView,
+                   ClosedView, Confetti, LoadingScreen
   lib/             telegram (Mini App bridge), identity, hooks, ui
 ```
 
@@ -199,6 +196,6 @@ src/
 | Command | Does |
 | --- | --- |
 | `npx convex dev` | Convex backend (watch + push) |
-| `npm run dev` | Vite dev server (Mini App / web room) |
+| `npm run dev` | Vite dev server for the Mini App (browser access is a dev convenience) |
 | `npm run build` | Type-check + production build to `dist/` |
 | `npm run lint` | ESLint (incl. `react-hooks` rules) |

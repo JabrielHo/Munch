@@ -8,8 +8,8 @@
  * once at load, exactly like CLIENT_ID.
  *
  * Trust model: the fields here (user, start_param) drive identity and
- * navigation on the CLIENT, same trust level as the localStorage clientId the
- * web flow uses. Host actions (spin/lock/end) are the ones with teeth, and
+ * navigation on the CLIENT, no more trustworthy than the localStorage clientId
+ * a browser dev session falls back to. Host actions (spin/lock/end) have teeth:
  * those send the raw signed `initData` string to the server, which verifies
  * Telegram's HMAC before acting.
  */

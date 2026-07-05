@@ -6,9 +6,10 @@ import { deployEnv } from "./telegram";
 const http = httpRouter();
 
 /**
- * "I'm leaving" beacon. navigator.sendBeacon fires this on tab/window close —
- * where React's unmount (and the normal leave mutation) can't run — so a guest
- * drops out of presence instantly instead of waiting out the heartbeat window.
+ * "I'm leaving" beacon. navigator.sendBeacon fires this when the Telegram Mini
+ * App is closed or swiped away (the `pagehide` event) — where React's unmount
+ * (and the normal leave mutation) can't reliably run — so the member drops out
+ * of presence instantly instead of waiting out the heartbeat window.
  * Sent as text/plain so it's a CORS-simple request (no preflight needed).
  */
 http.route({

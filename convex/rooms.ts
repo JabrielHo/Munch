@@ -8,7 +8,7 @@ import { MAX_NAME, MAX_TEXT, byVotesDesc, clean, roomByCode, requireRoom } from 
 /**
  * Core room logic. Rooms are created by the Telegram bot (/munch — see
  * telegram.ts); this module holds the shared domain rules plus the public
- * queries/mutations the room UI (Mini App and web guests) talks to.
+ * queries/mutations the Mini App room UI talks to.
  *
  * Host authority lives with the Telegram starter: UI-level checks compare the
  * viewer's clientId against "tg:<tgHostUserId>", and host ACTIONS (spin/lock/
@@ -52,11 +52,6 @@ export function isTgHost(room: Doc<"rooms">, clientId: string): boolean {
   return clientId === `tg:${room.tgHostUserId}`;
 }
 
-/** After this age, ANYONE in the group may close a lingering open round from
- *  the history screen (the starter can always close their own). Enforced in
- *  telegram.ts against the signed Mini App identity. */
-export const OLD_ROUND_CLOSE_MS = 24 * 60 * 60 * 1000;
-
 const CHAT_REFRESH_DEBOUNCE_MS = 2000;
 
 /** Mini App activity should show up on the chat's scoreboard message — but a
@@ -99,8 +94,8 @@ export async function decide(
   });
 }
 
-/** Pick a spin winner + the wheel geometry, server-side, so every screen
- *  (Mini App wheels, web guests) animates to the exact same result. */
+/** Pick a spin winner + the wheel geometry, server-side, so every phone's
+ *  Mini App wheel animates to the exact same result. */
 export function computeSpin(options: Doc<"options">[]) {
   const sorted = [...options].sort(byVotesDesc);
   const wheel = sorted.slice(0, WHEEL_MAX);
@@ -120,8 +115,8 @@ export function pickTop(options: Doc<"options">[]) {
   return leaders[Math.floor(Math.random() * leaders.length)];
 }
 
-/** Validate + insert an option. The single write path for the Mini App / web
- *  mutation (addOption) and the Telegram bot, so caps, dedup, and
+/** Validate + insert an option. The single write path for the Mini App's
+ *  addOption mutation and the Telegram bot, so caps, dedup, and
  *  classification behave identically on both surfaces. */
 export async function insertOption(
   ctx: MutationCtx,
@@ -237,7 +232,8 @@ export const getRoom = query({
       ...rest,
       mine: addedByClientId === clientId,
     }));
-    // Don't ship Telegram chat/user ids (or the unused-on-web hostName).
+    // Strip the Telegram chat/user ids, plus hostName (the room view doesn't
+    // show it; History ships it from its own query).
     const { tgChatId, tgHostUserId, tgMessageId, tgRefreshPending, hostName, ...publicRoom } = room;
     return {
       room: publicRoom,
@@ -248,21 +244,45 @@ export const getRoom = query({
   },
 });
 
+const HISTORY_MAX = 50;
+
 /** Every round this room's group chat has run — live ones first-class, and
  *  outcomes for the decided ones. The room code is the capability: holding
- *  any one round's code (you got it from the chat) unlocks the chat's list. */
+ *  any one round's code (you got it from the chat) unlocks the chat's list.
+ *  Returns null (not an error) for an unknown code, like getRoom — thrown
+ *  query errors would land in React with no boundary to catch them.
+ *
+ *  Whether a round is closable is NOT computed here: it depends on wall-clock
+ *  age, and a reactive query only re-runs on data changes — the flag would
+ *  freeze. The client derives it at render time from createdAt + mine. */
 export const groupHistory = query({
   args: { code: v.string(), clientId: v.string() },
   handler: async (ctx, { code, clientId }) => {
-    const anchor = await requireRoom(ctx, code);
-    const rooms = await ctx.db
-      .query("rooms")
-      .withIndex("by_tg_chat", (q) => q.eq("tgChatId", anchor.tgChatId))
-      .collect();
-    rooms.sort((a, b) => b.createdAt - a.createdAt);
-    const now = Date.now();
+    const anchor = await roomByCode(ctx, code);
+    if (!anchor) return null;
+    // Two index-bounded reads instead of collecting the chat's entire history
+    // (it grows forever). For closed rounds the index orders by closedAt —
+    // "recently closed" stands in for "recent", which the merge-sort below
+    // then refines by actual creation time.
+    const [open, closed] = await Promise.all([
+      ctx.db
+        .query("rooms")
+        .withIndex("by_tg_chat", (q) =>
+          q.eq("tgChatId", anchor.tgChatId).eq("closedAt", undefined),
+        )
+        .order("desc")
+        .take(HISTORY_MAX),
+      ctx.db
+        .query("rooms")
+        .withIndex("by_tg_chat", (q) => q.eq("tgChatId", anchor.tgChatId).gt("closedAt", 0))
+        .order("desc")
+        .take(HISTORY_MAX),
+    ]);
+    const rooms = [...open, ...closed]
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, HISTORY_MAX);
     return Promise.all(
-      rooms.slice(0, 50).map(async (r) => {
+      rooms.map(async (r) => {
         const winner = r.winnerOptionId ? await ctx.db.get(r.winnerOptionId) : null;
         return {
           code: r.code,
@@ -273,8 +293,6 @@ export const groupHistory = query({
           winner: winner ? { emoji: winner.emoji, text: winner.text } : null,
           decidedVotes: r.decidedVotes,
           mine: isTgHost(r, clientId),
-          // UI hint only — the close action re-verifies against signed initData.
-          closable: !r.closedAt && (isTgHost(r, clientId) || now - r.createdAt > OLD_ROUND_CLOSE_MS),
         };
       }),
     );

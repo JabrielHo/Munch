@@ -20,8 +20,8 @@ export function byVotesDesc(
   return b.voteCount - a.voteCount || a.createdAt - b.createdAt;
 }
 
-/** Google Maps search link — used by the bot's result message and the web
- *  result card alike. */
+/** Google Maps search link — used by the bot's result message and the Mini
+ *  App result card alike. */
 export function mapsUrl(query: string): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 }
@@ -36,12 +36,17 @@ export function tgFullName(u: {
   return [u.first_name, u.last_name].filter(Boolean).join(" ") || u.username || "";
 }
 
-/** "vote"/"votes" — one pluralization for the bot message and the web cards. */
+/** "vote"/"votes" — one pluralization for the bot message and the Mini App cards. */
 export function voteWord(n: number): string {
   return n === 1 ? "vote" : "votes";
 }
 
-/** Look up a room by its share code — an opaque token, matched exactly. */
+/** After this age, ANYONE in the group may close a lingering open round (the
+ *  starter can always close their own). Lives here (not rooms.ts) because the
+ *  History page computes the same freshness client-side at render time. */
+export const OLD_ROUND_CLOSE_MS = 24 * 60 * 60 * 1000;
+
+/** Look up a room by its room code — an opaque token, matched exactly. */
 export async function roomByCode(ctx: QueryCtx | MutationCtx, code: string) {
   return ctx.db
     .query("rooms")

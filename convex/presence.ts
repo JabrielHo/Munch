@@ -3,10 +3,11 @@ import { mutation, query } from "./_generated/server";
 import { roomByCode, clean, MAX_NAME } from "./lib";
 
 // Someone counts as "here" if we've heard from them in the last 4s. Clients
-// heartbeat every ~1.5s (even while the tab is hidden), so this is a ~2.6x grace
-// window that tolerates background timer throttling — a tabbed-away user keeps
-// their slot. It's also the fallback that drops a guest when the browser/window
-// is fully closed and the on-close beacon gets dropped during teardown.
+// heartbeat every ~1.5s (even while the Mini App is backgrounded), so this is a
+// ~2.6x grace window that tolerates background timer throttling — a member who
+// switches back to the chat keeps their slot. It's also the fallback that drops
+// someone when the webview is fully closed and the on-close beacon (see
+// http.ts /leave) gets dropped during teardown.
 const ACTIVE_WINDOW_MS = 4_000;
 
 /** Upsert this client's presence row with a fresh timestamp. */

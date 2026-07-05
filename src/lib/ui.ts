@@ -20,10 +20,6 @@ export function avatarColor(seed: string): string {
   return ACCENT_COLORS[hash(seed) % ACCENT_COLORS.length];
 }
 
-export function shareUrl(code: string): string {
-  return `${window.location.origin}/r/${code}`;
-}
-
 // One maps-link builder for every surface (bot messages import it too).
 export { mapsUrl } from "../../convex/lib";
 

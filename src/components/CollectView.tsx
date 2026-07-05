@@ -4,9 +4,8 @@ import { useAction, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { CLIENT_ID, MAX_TEXT } from "../lib/identity";
-import { isTelegram, tgInitData } from "../lib/telegram";
-import { useClipboard } from "../lib/hooks";
-import { alertError, avatarColor, shareUrl } from "../lib/ui";
+import { tgInitData } from "../lib/telegram";
+import { alertError, avatarColor } from "../lib/ui";
 import type { PublicRoom, PublicOption } from "../lib/types";
 import { OptionRow } from "./OptionRow";
 
@@ -37,7 +36,6 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
   // (host controls and hints come back on blur). The ResizeObserver below
   // re-measures, so the content padding follows automatically.
   const [typing, setTyping] = useState(false);
-  const { copied, copy } = useClipboard();
 
   // The dock is fixed to the bottom; reserve exactly its height as bottom
   // padding so the last option is never hidden behind it (the host's dock is
@@ -93,14 +91,6 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
           <span className="live-dot">LIVE</span>
         </div>
         <div className="room-subrow">
-          {!isTelegram && (
-            <button
-              type="button"
-              className={`share-chip${copied ? " share-chip--done" : ""}`}
-              onClick={() => void copy(shareUrl(room.code))}>
-              {copied ? "Copied! ✓ paste in the chat" : "Copy link 🔗"}
-            </button>
-          )}
           <span className="here-count">{here} here</span>
         </div>
         {names.length > 0 && (
@@ -173,11 +163,11 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
                   type="button"
                   className="linklike"
                   onClick={() => {
-                    if (confirm("Close this room for everyone?")) {
+                    if (confirm("Close this round for everyone?")) {
                       hostAct("end");
                     }
                   }}>
-                  End this room 🌙
+                  End this round 🌙
                 </button>
               </div>
             </>
