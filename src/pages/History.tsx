@@ -3,21 +3,24 @@ import { Link, useParams } from "react-router-dom";
 import { useAction, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { OLD_ROUND_CLOSE_MS } from "../../convex/lib";
-import { CLIENT_ID } from "../lib/identity";
+import { useRoomSession } from "../lib/session";
 import { isTelegram, tgInitData } from "../lib/telegram";
 import { alertError, tileColor } from "../lib/ui";
 import { LoadingScreen } from "../components/LoadingScreen";
+import { NoticeScreen } from "../components/NoticeScreen";
 
 /**
  * Every round this group has run, newest first — the live ones, and what won
  * in the finished ones. Reached from a room via "🗂 All rounds", so the URL
- * carries that room's code as the group capability. Tapping a round opens it;
- * lingering open rounds can be closed from here (the starter anytime, anyone
- * once the round is a day old — enforced server-side via signed initData).
+ * carries that room's code, which the access gate exchanges for a token.
+ * Tapping a round opens it; lingering open rounds can be closed from here (the
+ * starter anytime, anyone once the round is a day old — enforced server-side).
  */
 export default function History() {
   const { code = "" } = useParams();
-  const rounds = useQuery(api.rooms.groupHistory, { code, clientId: CLIENT_ID });
+  const session = useRoomSession(code);
+  const token = session.status === "ok" ? session.token : null;
+  const rounds = useQuery(api.rooms.groupHistory, token ? { code, token } : "skip");
   // Closing is just the "end" host action, aimed at an old round by its code.
   const hostAction = useAction(api.telegram.miniAppHostAction);
 
@@ -35,23 +38,11 @@ export default function History() {
     hostAction({ initData: tgInitData, code: roundCode, act: "end" }).catch(alertError);
   }
 
-  if (rounds === undefined) {
-    return <LoadingScreen />;
-  }
+  if (session.status === "loading") return <LoadingScreen />;
+  if (session.status === "denied") return <NoticeScreen message={session.message} />;
 
-  if (rounds === null) {
-    return (
-      <div className="screen home">
-        <div className="home-top">
-          <div className="wordmark">Munch&nbsp;🍜</div>
-          <div className="tagline">That round isn't here.</div>
-        </div>
-        <Link className="btn btn--block btn--lg" to="/">
-          What is Munch?
-        </Link>
-      </div>
-    );
-  }
+  if (rounds === undefined) return <LoadingScreen />;
+  if (rounds === null) return <NoticeScreen message="That round isn't here." />;
 
   return (
     <div className="screen room">

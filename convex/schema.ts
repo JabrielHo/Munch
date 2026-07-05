@@ -70,4 +70,19 @@ export default defineSchema({
   })
     .index("by_room", ["roomId"])
     .index("by_room_client", ["roomId", "clientId"]),
+
+  // Access grants: proof that a Telegram user is a current member of a group.
+  // Minted by enterRoom (telegram.ts) after a getChatMember check, then
+  // presented as `token` by every read/write so the client can't spoof
+  // identity or reach a chat it doesn't belong to. Short-lived + re-checked.
+  roomSessions: defineTable({
+    token: v.string(), // random capability the client holds
+    tgChatId: v.number(), // the group this grant is scoped to
+    tgUserId: v.number(), // the verified member
+    name: v.string(), // their Telegram name, snapshotted (never client-supplied)
+    checkedAt: v.number(), // last successful getChatMember (drives re-check cadence)
+    expiresAt: v.number(), // grant lifetime; queries/mutations reject once past
+  })
+    .index("by_token", ["token"])
+    .index("by_chat_user", ["tgChatId", "tgUserId"]),
 });

@@ -17,9 +17,9 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     try {
-      const { code, clientId } = JSON.parse(await request.text());
-      if (typeof code === "string" && typeof clientId === "string") {
-        await ctx.runMutation(api.presence.leave, { code, clientId });
+      const { code, token } = JSON.parse(await request.text());
+      if (typeof code === "string" && typeof token === "string") {
+        await ctx.runMutation(api.presence.leave, { code, token });
       }
     } catch {
       // Ignore malformed beacons — this is best-effort cleanup.

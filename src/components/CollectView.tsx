@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useAction, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
-import { CLIENT_ID, MAX_TEXT } from "../lib/identity";
+import { MAX_TEXT } from "../lib/identity";
 import { tgInitData } from "../lib/telegram";
 import { alertError, avatarColor } from "../lib/ui";
 import type { PublicRoom, PublicOption } from "../lib/types";
@@ -16,9 +16,10 @@ interface Props {
   presence: { count: number; names: string[] } | undefined;
   votedIds: Set<string>;
   name: string;
+  token: string;
 }
 
-export function CollectView({ room, options, viewerIsHost, presence, votedIds, name }: Props) {
+export function CollectView({ room, options, viewerIsHost, presence, votedIds, name, token }: Props) {
   const addOption = useMutation(api.rooms.addOption);
   const toggleVote = useMutation(api.rooms.toggleVote);
   const removeOption = useMutation(api.rooms.removeOption);
@@ -57,17 +58,17 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
     e.preventDefault();
     const value = text.trim();
     if (!value) return;
-    addOption({ code: room.code, text: value, name, clientId: CLIENT_ID })
+    addOption({ code: room.code, text: value, token })
       .then(() => setText(""))
       .catch(alertError);
   }
 
   function onVote(optionId: Id<"options">) {
-    toggleVote({ optionId, clientId: CLIENT_ID, name }).catch(alertError);
+    toggleVote({ optionId, token }).catch(alertError);
   }
 
   function onRemove(optionId: Id<"options">) {
-    removeOption({ optionId, clientId: CLIENT_ID }).catch(alertError);
+    removeOption({ optionId, token }).catch(alertError);
   }
 
   const leader = options[0];

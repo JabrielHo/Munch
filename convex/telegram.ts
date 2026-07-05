@@ -18,6 +18,7 @@ import {
   clean,
   mapsUrl,
   requireRoom,
+  roomByCode,
   tgFullName,
   voteWord,
 } from "./lib";
@@ -493,6 +494,174 @@ export const miniAppHostAction = action({
       act,
     });
     await afterHostAction(ctx, act, res);
+  },
+});
+
+// —— Access grants (group-membership gate) ——
+
+// A grant is valid this long; the client refreshes well before expiry.
+const SESSION_TTL_MS = 60 * 60 * 1000;
+// Within this window of the last check, enterRoom trusts the existing grant
+// and skips the getChatMember round-trip (bounds re-checks on rapid reopens).
+const SESSION_RECHECK_MS = 4 * 60 * 1000;
+
+/** Is this user a current member of the chat? Fails CLOSED — a Telegram API
+ *  error or an unrecognized status denies access. */
+async function isChatMember(chatId: number, userId: number): Promise<boolean> {
+  const res = (await tg("getChatMember", { chat_id: chatId, user_id: userId })) as {
+    status?: string;
+    is_member?: boolean;
+  } | null;
+  if (!res) return false;
+  if (res.status === "creator" || res.status === "administrator" || res.status === "member") {
+    return true;
+  }
+  // A "restricted" user is still in the group only if is_member is true.
+  if (res.status === "restricted") return res.is_member === true;
+  return false; // left, kicked, or anything unexpected
+}
+
+/** The chat a room belongs to (enterRoom needs it before any grant exists). */
+export const roomChatByCode = internalQuery({
+  args: { code: v.string() },
+  handler: async (ctx, { code }) => {
+    const room = await roomByCode(ctx, code);
+    return room ? { tgChatId: room.tgChatId } : null;
+  },
+});
+
+/** The live grant for this member in this chat (for the re-check short-circuit). */
+export const sessionFor = internalQuery({
+  args: { tgChatId: v.number(), tgUserId: v.number() },
+  handler: async (ctx, { tgChatId, tgUserId }) => {
+    const s = await ctx.db
+      .query("roomSessions")
+      .withIndex("by_chat_user", (q) => q.eq("tgChatId", tgChatId).eq("tgUserId", tgUserId))
+      .unique();
+    if (!s || s.expiresAt < Date.now()) return null;
+    return { token: s.token, checkedAt: s.checkedAt };
+  },
+});
+
+/** Mint or refresh a member's grant. One row per (chat, user): the token is
+ *  stable across reopens so old tabs keep working; expiry always extends.
+ *  `recheck` marks that getChatMember just succeeded (resets the re-check clock). */
+export const upsertSession = internalMutation({
+  args: { tgChatId: v.number(), tgUserId: v.number(), name: v.string(), recheck: v.boolean() },
+  handler: async (ctx, { tgChatId, tgUserId, name, recheck }) => {
+    const now = Date.now();
+    const existing = await ctx.db
+      .query("roomSessions")
+      .withIndex("by_chat_user", (q) => q.eq("tgChatId", tgChatId).eq("tgUserId", tgUserId))
+      .unique();
+    const patch = {
+      name,
+      expiresAt: now + SESSION_TTL_MS,
+      ...(recheck ? { checkedAt: now } : {}),
+    };
+    if (existing) {
+      await ctx.db.patch(existing._id, patch);
+      return existing.token;
+    }
+    const token = crypto.randomUUID();
+    await ctx.db.insert("roomSessions", {
+      token,
+      tgChatId,
+      tgUserId,
+      name,
+      checkedAt: now,
+      expiresAt: now + SESSION_TTL_MS,
+    });
+    return token;
+  },
+});
+
+/** Revoke a member's grant (they left / were kicked). */
+export const dropSession = internalMutation({
+  args: { tgChatId: v.number(), tgUserId: v.number() },
+  handler: async (ctx, { tgChatId, tgUserId }) => {
+    const existing = await ctx.db
+      .query("roomSessions")
+      .withIndex("by_chat_user", (q) => q.eq("tgChatId", tgChatId).eq("tgUserId", tgUserId))
+      .unique();
+    if (existing) await ctx.db.delete(existing._id);
+  },
+});
+
+/** The entry gate. The Mini App calls this before rendering a room: verify the
+ *  signed Telegram identity, confirm the user is a CURRENT member of the room's
+ *  group (getChatMember), and hand back an access token the room reads/writes
+ *  present. Re-checks membership on every entry (after a short grace window)
+ *  and the client re-calls it periodically, so leaving/being kicked revokes
+ *  access within minutes. */
+export const enterRoom = action({
+  args: { initData: v.string(), code: v.string() },
+  handler: async (ctx, { initData, code }): Promise<{ token: string }> => {
+    const user = await verifyInitData(initData);
+    const rc = await ctx.runQuery(internal.telegram.roomChatByCode, { code });
+    if (!rc) throw new ConvexError("That round isn't here.");
+
+    const existing = await ctx.runQuery(internal.telegram.sessionFor, {
+      tgChatId: rc.tgChatId,
+      tgUserId: user.id,
+    });
+    // Fresh grant → trust it, just extend expiry (no getChatMember round-trip).
+    if (existing && Date.now() - existing.checkedAt < SESSION_RECHECK_MS) {
+      const token = await ctx.runMutation(internal.telegram.upsertSession, {
+        tgChatId: rc.tgChatId,
+        tgUserId: user.id,
+        name: displayName(user),
+        recheck: false,
+      });
+      return { token };
+    }
+
+    if (!(await isChatMember(rc.tgChatId, user.id))) {
+      await ctx.runMutation(internal.telegram.dropSession, {
+        tgChatId: rc.tgChatId,
+        tgUserId: user.id,
+      });
+      throw new ConvexError(
+        "You're not in this group. Open Munch from the group chat to join in.",
+      );
+    }
+    const token = await ctx.runMutation(internal.telegram.upsertSession, {
+      tgChatId: rc.tgChatId,
+      tgUserId: user.id,
+      name: displayName(user),
+      recheck: true,
+    });
+    return { token };
+  },
+});
+
+/** DEV ONLY: mint a grant with no membership check, for browser testing
+ *  (npx convex run telegram:devGrantSession '{...}'). Internal — not reachable
+ *  from any client; the real gate is enterRoom. */
+export const devGrantSession = internalMutation({
+  args: { code: v.string(), tgUserId: v.number(), name: v.string() },
+  handler: async (ctx, { code, tgUserId, name }) => {
+    const room = await roomByCode(ctx, code);
+    if (!room) throw new ConvexError("No such room.");
+    const now = Date.now();
+    const existing = await ctx.db
+      .query("roomSessions")
+      .withIndex("by_chat_user", (q) => q.eq("tgChatId", room.tgChatId).eq("tgUserId", tgUserId))
+      .unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, { name, checkedAt: now, expiresAt: now + SESSION_TTL_MS });
+      return existing.token;
+    }
+    const token = crypto.randomUUID();
+    await ctx.db.insert("roomSessions", {
+      token,
+      tgChatId: room.tgChatId,
+      tgUserId,
+      name,
+      checkedAt: now,
+      expiresAt: now + SESSION_TTL_MS,
+    });
+    return token;
   },
 });
 

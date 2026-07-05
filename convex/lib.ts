@@ -46,6 +46,21 @@ export function voteWord(n: number): string {
  *  History page computes the same freshness client-side at render time. */
 export const OLD_ROUND_CLOSE_MS = 24 * 60 * 60 * 1000;
 
+/** Resolve an access token to the member it was granted to, or null if the
+ *  token is unknown or expired. The single trust anchor for the client-facing
+ *  reads/writes: identity (clientId, name) comes from HERE, never from client
+ *  args, so a member can't act as anyone else and a non-member has no token at
+ *  all. See enterRoom in telegram.ts for how grants are minted. */
+export async function sessionFromToken(ctx: QueryCtx | MutationCtx, token: string) {
+  if (!token) return null;
+  const s = await ctx.db
+    .query("roomSessions")
+    .withIndex("by_token", (q) => q.eq("token", token))
+    .unique();
+  if (!s || s.expiresAt < Date.now()) return null;
+  return { tgChatId: s.tgChatId, tgUserId: s.tgUserId, clientId: `tg:${s.tgUserId}`, name: s.name };
+}
+
 /** Look up a room by its room code — an opaque token, matched exactly. */
 export async function roomByCode(ctx: QueryCtx | MutationCtx, code: string) {
   return ctx.db

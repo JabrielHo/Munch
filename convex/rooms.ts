@@ -3,7 +3,15 @@ import { mutation, query, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { classify } from "./foods";
-import { MAX_NAME, MAX_TEXT, byVotesDesc, clean, roomByCode, requireRoom } from "./lib";
+import {
+  MAX_NAME,
+  MAX_TEXT,
+  byVotesDesc,
+  clean,
+  roomByCode,
+  requireRoom,
+  sessionFromToken,
+} from "./lib";
 
 /**
  * Core room logic. Rooms are created by the Telegram bot (/munch — see
@@ -205,10 +213,15 @@ export async function toggleVoteCore(
 /** Everything the room screen needs: room state, options sorted by votes, and
  *  the viewer's own votes (for the "you voted" fill) — one subscription. */
 export const getRoom = query({
-  args: { code: v.string(), clientId: v.string() },
-  handler: async (ctx, { code, clientId }) => {
+  args: { code: v.string(), token: v.string() },
+  handler: async (ctx, { code, token }) => {
+    // The token proves group membership AND supplies identity — a non-member
+    // has none, so they see the same "not here" as a bad code.
+    const session = await sessionFromToken(ctx, token);
+    if (!session) return null;
     const room = await roomByCode(ctx, code);
-    if (!room) return null;
+    if (!room || room.tgChatId !== session.tgChatId) return null;
+    const clientId = session.clientId;
     const [rows, myVotes] = await Promise.all([
       ctx.db
         .query("options")
@@ -256,10 +269,13 @@ const HISTORY_MAX = 50;
  *  age, and a reactive query only re-runs on data changes — the flag would
  *  freeze. The client derives it at render time from createdAt + mine. */
 export const groupHistory = query({
-  args: { code: v.string(), clientId: v.string() },
-  handler: async (ctx, { code, clientId }) => {
+  args: { code: v.string(), token: v.string() },
+  handler: async (ctx, { code, token }) => {
+    const session = await sessionFromToken(ctx, token);
+    if (!session) return null;
     const anchor = await roomByCode(ctx, code);
-    if (!anchor) return null;
+    if (!anchor || anchor.tgChatId !== session.tgChatId) return null;
+    const clientId = session.clientId;
     // Two index-bounded reads instead of collecting the chat's entire history
     // (it grows forever). For closed rounds the index orders by closedAt —
     // "recently closed" stands in for "recent", which the merge-sort below
@@ -301,17 +317,26 @@ export const groupHistory = query({
 
 // ——————————————————————— Mutations ———————————————————————
 
+/** The member's identity for a write, resolved from their access token. Throws
+ *  the same friendly error the client shows if the grant lapsed. */
+async function requireSession(ctx: MutationCtx, token: string) {
+  const session = await sessionFromToken(ctx, token);
+  if (!session) throw new ConvexError("Your session expired — reopen Munch from the chat.");
+  return session;
+}
+
 /** Anyone in the room: add a place or a craving. Auto-classified by foods.ts. */
 export const addOption = mutation({
-  args: {
-    code: v.string(),
-    text: v.string(),
-    name: v.string(),
-    clientId: v.string(),
-  },
-  handler: async (ctx, { code, text, name, clientId }) => {
+  args: { code: v.string(), text: v.string(), token: v.string() },
+  handler: async (ctx, { code, text, token }) => {
+    const session = await requireSession(ctx, token);
     const room = await requireRoom(ctx, code);
-    const { optionId } = await insertOption(ctx, room, { text, name, clientId });
+    if (room.tgChatId !== session.tgChatId) throw new ConvexError("Wrong group.");
+    const { optionId } = await insertOption(ctx, room, {
+      text,
+      name: session.name,
+      clientId: session.clientId,
+    });
     await scheduleChatRefresh(ctx, room);
     return { optionId };
   },
@@ -319,17 +344,18 @@ export const addOption = mutation({
 
 /** Remove an option (only the person who added it, or the host). */
 export const removeOption = mutation({
-  args: { optionId: v.id("options"), clientId: v.string() },
-  handler: async (ctx, { optionId, clientId }) => {
+  args: { optionId: v.id("options"), token: v.string() },
+  handler: async (ctx, { optionId, token }) => {
+    const session = await requireSession(ctx, token);
     const option = await ctx.db.get(optionId);
     if (!option) return;
     const room = await ctx.db.get(option.roomId);
-    if (!room) return;
+    if (!room || room.tgChatId !== session.tgChatId) return;
     if (room.closedAt) throw new ConvexError("This room is closed.");
     if (room.phase !== "collecting") {
       throw new ConvexError("Can't change options mid-decision.");
     }
-    if (option.addedByClientId !== clientId && !isTgHost(room, clientId)) {
+    if (option.addedByClientId !== session.clientId && !isTgHost(room, session.clientId)) {
       throw new ConvexError("You can only remove options you added.");
     }
     const votes = await ctx.db
@@ -344,9 +370,14 @@ export const removeOption = mutation({
 
 /** Toggle this participant's vote on an option (one vote per person per option). */
 export const toggleVote = mutation({
-  args: { optionId: v.id("options"), clientId: v.string(), name: v.string() },
-  handler: async (ctx, { optionId, clientId, name }) => {
-    const { voted, room } = await toggleVoteCore(ctx, optionId, clientId, name);
+  args: { optionId: v.id("options"), token: v.string() },
+  handler: async (ctx, { optionId, token }) => {
+    const session = await requireSession(ctx, token);
+    const option = await ctx.db.get(optionId);
+    if (!option) throw new ConvexError("That option's gone.");
+    const target = await ctx.db.get(option.roomId);
+    if (!target || target.tgChatId !== session.tgChatId) throw new ConvexError("Wrong group.");
+    const { voted, room } = await toggleVoteCore(ctx, optionId, session.clientId, session.name);
     await scheduleChatRefresh(ctx, room);
     return { voted };
   },

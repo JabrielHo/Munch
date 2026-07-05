@@ -1,40 +1,39 @@
 import { useEffect } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { CLIENT_ID, VIEWER_NAME, rememberRoomCode } from "../lib/identity";
+import { VIEWER_NAME, rememberRoomCode } from "../lib/identity";
+import { useRoomSession } from "../lib/session";
 import { CollectView } from "../components/CollectView";
 import { DecideView } from "../components/DecideView";
 import { ClosedView } from "../components/ClosedView";
 import { LoadingScreen } from "../components/LoadingScreen";
+import { NoticeScreen } from "../components/NoticeScreen";
 
 const HEARTBEAT_MS = 1_500;
 
 export default function Room() {
   const { code = "" } = useParams();
+  const session = useRoomSession(code);
+  const token = session.status === "ok" ? session.token : null;
 
-  const data = useQuery(api.rooms.getRoom, { code, clientId: CLIENT_ID });
-  const presence = useQuery(api.presence.here, { code });
+  const data = useQuery(api.rooms.getRoom, token ? { code, token } : "skip");
+  const presence = useQuery(api.presence.here, token ? { code, token } : "skip");
 
-  const name = VIEWER_NAME;
   const heartbeat = useMutation(api.presence.heartbeat);
   const leave = useMutation(api.presence.leave);
 
   useEffect(() => {
-    if (!code) return;
+    if (!code || !token) return;
     const siteUrl =
       import.meta.env.VITE_CONVEX_SITE_URL ||
       import.meta.env.VITE_CONVEX_URL.replace(".convex.cloud", ".convex.site");
     const beat = () => {
-      if (!name) return;
-      void heartbeat({ code, clientId: CLIENT_ID, name }).catch(() => {});
+      void heartbeat({ code, token }).catch(() => {});
     };
     const leaveOnClose = () => {
       if (siteUrl) {
-        navigator.sendBeacon(
-          `${siteUrl}/leave`,
-          JSON.stringify({ code, clientId: CLIENT_ID }),
-        );
+        navigator.sendBeacon(`${siteUrl}/leave`, JSON.stringify({ code, token }));
       }
     };
 
@@ -45,14 +44,14 @@ export default function Room() {
       clearInterval(id);
       window.removeEventListener("pagehide", leaveOnClose);
     };
-  }, [code, name, heartbeat]);
+  }, [code, token, heartbeat]);
 
   useEffect(() => {
-    if (!code) return;
+    if (!code || !token) return;
     return () => {
-      void leave({ code, clientId: CLIENT_ID }).catch(() => {});
+      void leave({ code, token }).catch(() => {});
     };
-  }, [code, leave]);
+  }, [code, token, leave]);
 
   // Anchor for bare Mini App opens (no startapp param): remember the room so
   // TgEntry can land on this group's history instead of a dead end.
@@ -61,23 +60,11 @@ export default function Room() {
     if (code && found) rememberRoomCode(code);
   }, [code, found]);
 
-  if (data === undefined) {
-    return <LoadingScreen />;
-  }
+  if (session.status === "denied") return <NoticeScreen message={session.message} />;
+  if (!token) return <LoadingScreen />;
 
-  if (data === null) {
-    return (
-      <div className="screen home">
-        <div className="home-top">
-          <div className="wordmark">Munch&nbsp;🍜</div>
-          <div className="tagline">That round isn't here.</div>
-        </div>
-        <Link className="btn btn--block btn--lg" to="/">
-          What is Munch?
-        </Link>
-      </div>
-    );
-  }
+  if (data === undefined) return <LoadingScreen />;
+  if (data === null) return <NoticeScreen message="That round isn't here." />;
 
   const { room, options, viewerIsHost, myVoteIds } = data;
   const votedIds = new Set<string>(myVoteIds);
@@ -101,7 +88,8 @@ export default function Room() {
       viewerIsHost={viewerIsHost}
       presence={presence}
       votedIds={votedIds}
-      name={name}
+      name={VIEWER_NAME}
+      token={token}
     />
   );
 }

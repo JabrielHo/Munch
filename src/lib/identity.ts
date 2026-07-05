@@ -2,18 +2,12 @@ import { MAX_NAME, MAX_TEXT, clean } from "../../convex/lib";
 import { isTelegram, tgUser, tgDisplayName } from "./telegram";
 
 /**
- * Participant identity, kept entirely on the device — no account needed.
- *
- * `CLIENT_ID` is a stable random id per browser (used to dedupe votes and let
- * people remove their own options). It's computed once at module load, so no
- * component ever needs an effect to read it.
- *
- * Inside Telegram, identity comes from the Mini App session instead: the
- * clientId is "tg:<telegram user id>" — the SAME id the bot writes for votes
- * cast on the chat's buttons — so a person is one voter across both surfaces,
- * and their Telegram name is used directly, with no prompt to pick one.
+ * Client-side identity is display-only. The server never trusts anything from
+ * here: reads and writes present an access token (see lib/session.ts), and the
+ * server derives the real identity (clientId "tg:<user id>", name) from the
+ * grant it minted. So this module just holds the viewer's name for greetings
+ * and the last-room anchor for bare Mini App opens.
  */
-const CLIENT_KEY = "munch.clientId";
 const NAME_KEY = "munch.name";
 const LAST_CODE_KEY = "munch.lastCode";
 
@@ -32,23 +26,10 @@ export function lastRoomCode(): string | null {
 // `maxLength` can never drift from what the mutations actually enforce.
 export { MAX_TEXT };
 
-function readClientId(): string {
-  if (isTelegram && tgUser) return `tg:${tgUser.id}`;
-  let id = localStorage.getItem(CLIENT_KEY);
-  if (!id) {
-    id = crypto.randomUUID();
-    localStorage.setItem(CLIENT_KEY, id);
-  }
-  return id;
-}
-
-export const CLIENT_ID = readClientId();
-
 /**
- * The viewer's display name, fixed for the app's lifetime like CLIENT_ID:
- * inside Telegram it comes from the Mini App session (always present —
- * Telegram requires a first name). A `munch.name` in localStorage covers
- * browser-based dev sessions; the app never prompts for one.
+ * The viewer's display name, for local greetings only. Inside Telegram it comes
+ * from the Mini App session (always present — Telegram requires a first name);
+ * a `munch.name` in localStorage covers browser dev sessions.
  */
 export const VIEWER_NAME =
   (isTelegram ? clean(tgDisplayName(tgUser), MAX_NAME) : null) ||
