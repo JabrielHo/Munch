@@ -82,6 +82,10 @@ export default defineSchema({
     name: v.string(), // their Telegram name, snapshotted (never client-supplied)
     checkedAt: v.number(), // last successful getChatMember (drives re-check cadence)
     expiresAt: v.number(), // grant lifetime; queries/mutations reject once past
+    // Minted by devGrantSession for browser testing — never membership-checked,
+    // so it is exempt from the checkedAt staleness bound (see lib.ts). Only an
+    // internal mutation can set it; no client path reaches it.
+    dev: v.optional(v.boolean()),
   })
     .index("by_token", ["token"])
     .index("by_chat_user", ["tgChatId", "tgUserId"]),

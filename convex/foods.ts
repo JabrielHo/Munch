@@ -93,9 +93,12 @@ const FOODS: Record<string, FoodEntry> = {
   bingsu: { emoji: "🍧", cuisine: "Korean dessert", spots: [] },
 };
 
-/** Build a fast lookup from every key + alias to its entry. */
+/** Build a fast lookup from every key + alias to its entry. Null-prototype on
+ *  purpose: the lookup key is user-typed option text, and on a plain object
+ *  "constructor" (and friends) would resolve through Object.prototype to a
+ *  truthy non-entry. */
 const INDEX: Record<string, { key: string; entry: FoodEntry }> = (() => {
-  const idx: Record<string, { key: string; entry: FoodEntry }> = {};
+  const idx: Record<string, { key: string; entry: FoodEntry }> = Object.create(null);
   for (const [key, entry] of Object.entries(FOODS)) {
     idx[key] = { key, entry };
     for (const alias of entry.aliases ?? []) idx[alias] = { key, entry };

@@ -26,9 +26,10 @@ export function CollectView({ room, options, viewerIsHost, presence, votedIds, n
   const miniAppHost = useAction(api.telegram.miniAppHostAction);
 
   // Host controls only render for the Telegram starter (inside the Mini App),
-  // and every host action is verified server-side against the signed initData.
+  // and every host action is verified server-side against the signed initData
+  // plus the access token proving current membership of the room's group.
   function hostAct(act: "spin" | "lock" | "end") {
-    miniAppHost({ initData: tgInitData, code: room.code, act }).catch(alertError);
+    miniAppHost({ initData: tgInitData, code: room.code, token, act }).catch(alertError);
   }
 
   const [text, setText] = useState("");

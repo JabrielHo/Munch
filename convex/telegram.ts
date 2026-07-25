@@ -19,6 +19,7 @@ import {
   mapsUrl,
   requireRoom,
   roomByCode,
+  sessionFromToken,
   tgFullName,
   voteWord,
 } from "./lib";
@@ -154,9 +155,12 @@ const HOST_ACT = v.union(v.literal("spin"), v.literal("lock"), v.literal("end"))
 
 /** The one host-action implementation. Only reachable through the Mini App,
  *  whose caller has already verified the Telegram identity against the signed
- *  initData. Permission model: spin/lock are the starter's alone; "end" is the
- *  starter's anytime — and, because rounds never auto-expire, ANYONE's once
- *  the round has grown old (the History screen's cleanup power). */
+ *  initData AND confirmed, via the access token, that the caller is a current
+ *  member of this room's group (see hostActionByCode). Permission model:
+ *  spin/lock are the starter's alone; "end" is the starter's anytime — and,
+ *  because rounds never auto-expire, ANYONE's once the round has grown old
+ *  (the History screen's cleanup power). Every branch is a group member's
+ *  power, the starter's included: leaving the chat ends it. */
 async function applyHostAction(
   ctx: MutationCtx,
   room: Doc<"rooms">,
@@ -266,11 +270,21 @@ export const setSessionMessage = internalMutation({
 });
 
 /** Mini App host actions, addressed by room code (the Mini App doesn't know
- *  chat ids). The caller (miniAppHostAction) has already verified identity. */
+ *  chat ids). The caller (miniAppHostAction) has verified the signed initData,
+ *  which establishes WHO is calling — but a room code is not a secret (it rides
+ *  in the chat's Open Munch button and survives forwarding), so identity alone
+ *  would let any Telegram user, member or not, drive another group's round.
+ *  The access token is what proves current membership, exactly as it does for
+ *  every other client-facing write. */
 export const hostActionByCode = internalMutation({
-  args: { code: v.string(), tgUserId: v.number(), act: HOST_ACT },
-  handler: async (ctx, { code, tgUserId, act }) => {
+  args: { code: v.string(), token: v.string(), tgUserId: v.number(), act: HOST_ACT },
+  handler: async (ctx, { code, token, tgUserId, act }) => {
     const room = await requireRoom(ctx, code);
+    const session = await sessionFromToken(ctx, token);
+    if (!session || session.tgUserId !== tgUserId) {
+      throw new ConvexError("Your session expired — reopen Munch from the chat.");
+    }
+    if (room.tgChatId !== session.tgChatId) throw new ConvexError("Wrong group.");
     return applyHostAction(ctx, room, tgUserId, act);
   },
 });
@@ -483,13 +497,15 @@ async function verifyInitData(initData: string): Promise<TgUser> {
 }
 
 /** Spin / lock / end from inside the Mini App. Verifies the signed Telegram
- *  identity, applies the decision, then plays out the chat-side effects. */
+ *  identity and the room access token (identity + current group membership),
+ *  applies the decision, then plays out the chat-side effects. */
 export const miniAppHostAction = action({
-  args: { initData: v.string(), code: v.string(), act: HOST_ACT },
-  handler: async (ctx, { initData, code, act }) => {
+  args: { initData: v.string(), code: v.string(), token: v.string(), act: HOST_ACT },
+  handler: async (ctx, { initData, code, token, act }) => {
     const user = await verifyInitData(initData);
     const res = await ctx.runMutation(internal.telegram.hostActionByCode, {
       code,
+      token,
       tgUserId: user.id,
       act,
     });
@@ -558,6 +574,9 @@ export const upsertSession = internalMutation({
       name,
       expiresAt: now + SESSION_TTL_MS,
       ...(recheck ? { checkedAt: now } : {}),
+      // A real grant is never dev-exempt, even if devGrantSession seeded this
+      // row first (patching a field to undefined clears it).
+      dev: undefined,
     };
     if (existing) {
       await ctx.db.patch(existing._id, patch);
@@ -649,7 +668,12 @@ export const devGrantSession = internalMutation({
       .withIndex("by_chat_user", (q) => q.eq("tgChatId", room.tgChatId).eq("tgUserId", tgUserId))
       .unique();
     if (existing) {
-      await ctx.db.patch(existing._id, { name, checkedAt: now, expiresAt: now + SESSION_TTL_MS });
+      await ctx.db.patch(existing._id, {
+        name,
+        checkedAt: now,
+        expiresAt: now + SESSION_TTL_MS,
+        dev: true,
+      });
       return existing.token;
     }
     const token = crypto.randomUUID();
@@ -660,6 +684,9 @@ export const devGrantSession = internalMutation({
       name,
       checkedAt: now,
       expiresAt: now + SESSION_TTL_MS,
+      // Never membership-checked, so exempt from the staleness bound that
+      // revokes real grants — a browser-dev token has nothing to re-check.
+      dev: true,
     });
     return token;
   },

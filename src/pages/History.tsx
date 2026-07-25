@@ -34,8 +34,11 @@ export default function History() {
   }, []);
 
   function onClose(roundCode: string, title: string) {
+    if (!token) return;
     if (!confirm(`Close "${title}" for everyone?`)) return;
-    hostAction({ initData: tgInitData, code: roundCode, act: "end" }).catch(alertError);
+    // The token is minted per chat, not per round, so it authorizes closing any
+    // round in this group — which is exactly what the server checks.
+    hostAction({ initData: tgInitData, code: roundCode, token, act: "end" }).catch(alertError);
   }
 
   if (session.status === "loading") return <LoadingScreen />;
