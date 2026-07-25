@@ -46,11 +46,23 @@ export function voteWord(n: number): string {
  *  History page computes the same freshness client-side at render time. */
 export const OLD_ROUND_CLOSE_MS = 24 * 60 * 60 * 1000;
 
+/** How long a grant survives without a fresh getChatMember behind it. The
+ *  client re-enters every 5 minutes (REFRESH_MS in src/lib/session.ts) and
+ *  enterRoom re-checks membership whenever the last check is over 4 minutes
+ *  old, so a live session's checkedAt is never more than ~5 minutes stale —
+ *  this bound is three missed refreshes' slack. It exists because expiresAt
+ *  alone can't revoke: a client that simply stops calling enterRoom (or a
+ *  token lifted out of localStorage and replayed straight at the deployment)
+ *  would otherwise keep full access for the rest of the hour after its holder
+ *  is kicked from the group. */
+export const SESSION_MAX_STALE_MS = 15 * 60 * 1000;
+
 /** Resolve an access token to the member it was granted to, or null if the
- *  token is unknown or expired. The single trust anchor for the client-facing
- *  reads/writes: identity (clientId, name) comes from HERE, never from client
- *  args, so a member can't act as anyone else and a non-member has no token at
- *  all. See enterRoom in telegram.ts for how grants are minted. */
+ *  token is unknown, expired, or no longer backed by a recent membership
+ *  check. The single trust anchor for the client-facing reads/writes:
+ *  identity (clientId, name) comes from HERE, never from client args, so a
+ *  member can't act as anyone else and a non-member has no token at all. See
+ *  enterRoom in telegram.ts for how grants are minted. */
 export async function sessionFromToken(ctx: QueryCtx | MutationCtx, token: string) {
   if (!token) return null;
   const s = await ctx.db
@@ -58,6 +70,10 @@ export async function sessionFromToken(ctx: QueryCtx | MutationCtx, token: strin
     .withIndex("by_token", (q) => q.eq("token", token))
     .unique();
   if (!s || s.expiresAt < Date.now()) return null;
+  // Revocation is server-driven: membership must have been confirmed recently,
+  // not merely at some point inside the grant's lifetime. Dev grants carry no
+  // membership check at all (devGrantSession), so staleness means nothing there.
+  if (!s.dev && Date.now() - s.checkedAt > SESSION_MAX_STALE_MS) return null;
   return { tgChatId: s.tgChatId, tgUserId: s.tgUserId, clientId: `tg:${s.tgUserId}`, name: s.name };
 }
 
