@@ -11,41 +11,32 @@ import {
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
-  MAX_NAME,
-  MAX_TITLE,
-  OLD_ROUND_CLOSE_MS,
-  byVotesDesc,
-  clean,
-  mapsUrl,
+  ANYONE_CAN_CLOSE_AFTER_MS,
+  MAX_NAME_LENGTH,
+  MAX_TITLE_LENGTH,
+  byMostVotesFirst,
+  findRoomByCode,
+  googleMapsSearchUrl,
   requireRoom,
-  roomByCode,
   sessionFromToken,
-  tgFullName,
+  telegramFullName,
+  tidyText,
   voteWord,
 } from "./lib";
-import { decide, computeSpin, pickTop, randomRoomName } from "./rooms";
+import { computeSpinResult, pickTopVoted, randomRoomName, recordDecision } from "./rooms";
 
 /**
- * Munch as a Telegram bot, app-first: the chat is the notice board, the Mini
- * App is where everything happens.
+ * The chat is the notice board, the Mini App is where everything happens.
+ * /munch posts a scoreboard message the bot edits in place; adding, voting and
+ * the starter's spin/lock/end all happen in the app, which re-renders that
+ * message through a debounced refresh (scheduleChatRefresh in rooms.ts).
  *
- *  - /munch posts a live "session message": the round's title, a vote tally
- *    that the bot edits in place, and one button — 🎡 Open Munch. A chat can
- *    run several rounds at once, each on its own message, live until decided
- *    or ended.
- *  - Adding, voting, and the host's spin/lock/end all live in the Mini App
- *    (participants are clientId "tg:<user id>"; host actions verify Telegram's
- *    signed initData). App activity re-renders the tally via a debounced
- *    refresh scheduled from the room mutations (see scheduleChatRefresh in
- *    rooms.ts).
- *  - The winner is announced back into the chat, so people who never open the
- *    app still see the outcome.
- *
- * Updates arrive on the /telegram HTTP route (http.ts), which verifies the
- * webhook secret and hands the raw update to `handleUpdate`.
+ * Updates arrive on the /telegram route in http.ts, which checks the webhook
+ * secret and hands the raw update to handleUpdate at the bottom of this file.
  */
 
-// —— Telegram wire types (just the fields we read) ——
+// —— Telegram wire types (only the fields we read) ——
+
 type TgUser = {
   id: number;
   is_bot?: boolean;
@@ -66,23 +57,20 @@ type TgCallbackQuery = { id: string; from: TgUser; data?: string };
 type TgUpdate = { message?: TgMessage; callback_query?: TgCallbackQuery };
 
 const SPIN_SUSPENSE_MS = 4000; // drumroll before the winner is revealed
-const TALLY_MAX = 8; // options shown in the chat scoreboard
-// /munch always starts a new round — a chat can run several at once, each on
-// its own live scoreboard message, and rounds stay live until decided or
-// ended. One guard keeps that sane: a group racing to type /munch merges
-// into ONE round instead of N.
+const MAX_TALLY_ROWS = 8; // options listed on the chat scoreboard
+// A chat can run several rounds at once, each on its own scoreboard message,
+// and rounds stay live until decided or ended. The one guard on that: a group
+// racing to type /munch merges into ONE round instead of several.
 const MUNCH_MERGE_WINDOW_MS = 90 * 1000;
 
-// —— Small helpers ——
-
-/** Deployment env vars, via globalThis so the frontend tsconfig (which
- *  type-imports this module through _generated/api) needs no Node globals. */
+/** Read through globalThis so the frontend tsconfig — which type-imports this
+ *  module via _generated/api — doesn't need Node globals. */
 export function deployEnv(): Record<string, string | undefined> {
   return (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
 }
 
-function displayName(from: TgUser): string {
-  return clean(tgFullName(from), MAX_NAME) || "Someone";
+function displayName(user: TgUser): string {
+  return tidyText(telegramFullName(user), MAX_NAME_LENGTH) || "Someone";
 }
 
 function botToken(): string {
@@ -96,34 +84,36 @@ function botToken(): string {
 }
 
 /** The bot's own user id — the token is "<bot id>:<secret>". */
-const botId = () => Number(botToken().split(":")[0]);
+function botUserId(): number {
+  return Number(botToken().split(":")[0]);
+}
 
-/** Call the Bot API. Returns the result, or null on failure (logged, never
- *  thrown — a failed edit must not take down webhook handling). */
-async function tg(method: string, payload: Record<string, unknown>): Promise<unknown> {
-  const res = await fetch(`https://api.telegram.org/bot${botToken()}/${method}`, {
+/** Returns null on failure rather than throwing — a failed message edit must
+ *  not take down webhook handling. */
+async function callTelegram(method: string, payload: Record<string, unknown>): Promise<unknown> {
+  const response = await fetch(`https://api.telegram.org/bot${botToken()}/${method}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   });
-  const body = (await res.json().catch(() => null)) as {
+  const body = (await response.json().catch(() => null)) as {
     ok?: boolean;
     result?: unknown;
     description?: string;
   } | null;
   if (!body?.ok) {
-    const desc = body?.description ?? `HTTP ${res.status}`;
+    const reason = body?.description ?? `HTTP ${response.status}`;
     // Re-rendering identical content is a no-op, not a problem.
-    if (!desc.includes("message is not modified")) {
-      console.warn(`Telegram ${method} failed: ${desc}`);
+    if (!reason.includes("message is not modified")) {
+      console.warn(`Telegram ${method} failed: ${reason}`);
     }
     return null;
   }
   return body.result;
 }
 
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 const HELP = [
@@ -134,15 +124,12 @@ const HELP = [
   "Then tap 🎡 <b>Open Munch</b> on a round's message: add cravings, vote, and — if you started the round — spin the wheel or lock the top pick. The tally updates here live, and the winner lands right back in the chat.",
 ].join("\n");
 
-const PRIVATE_HELP =
+const PRIVATE_CHAT_HELP =
   "🍽 <b>Munch</b> works inside a group chat — add me to the group where your " +
   "crew argues about food, then send /munch there.\n\n" + HELP;
 
-// —— DB helpers (shared by the internal mutations/queries below) ——
-
-/** The newest open round in a chat (several may be live; this is only used to
- *  merge near-simultaneous /munch races). closedAt is part of the index, so
- *  this never touches the chat's ever-growing pile of closed rounds. */
+/** closedAt is part of the index, so this never touches the chat's
+ *  ever-growing pile of closed rounds. */
 async function newestOpenRound(ctx: QueryCtx | MutationCtx, chatId: number) {
   return ctx.db
     .query("rooms")
@@ -151,27 +138,35 @@ async function newestOpenRound(ctx: QueryCtx | MutationCtx, chatId: number) {
     .first();
 }
 
-const HOST_ACT = v.union(v.literal("spin"), v.literal("lock"), v.literal("end"));
+async function roomOptions(ctx: QueryCtx | MutationCtx, roomId: Id<"rooms">) {
+  const options = await ctx.db
+    .query("options")
+    .withIndex("by_room", (q) => q.eq("roomId", roomId))
+    .collect();
+  options.sort(byMostVotesFirst);
+  return options;
+}
 
-/** The one host-action implementation. Only reachable through the Mini App,
- *  whose caller has already verified the Telegram identity against the signed
- *  initData AND confirmed, via the access token, that the caller is a current
- *  member of this room's group (see hostActionByCode). Permission model:
- *  spin/lock are the starter's alone; "end" is the starter's anytime — and,
- *  because rounds never auto-expire, ANYONE's once the round has grown old
- *  (the History screen's cleanup power). Every branch is a group member's
- *  power, the starter's included: leaving the chat ends it. */
+const hostActionValidator = v.union(v.literal("spin"), v.literal("lock"), v.literal("end"));
+type HostAction = "spin" | "lock" | "end";
+
+/** Callers must already have verified the signed initData AND confirmed group
+ *  membership via the access token — see hostActionByCode.
+ *
+ *  Spinning and locking belong to the starter alone. Ending is theirs at any
+ *  time and, because rounds never expire on their own, anyone's once the round
+ *  has grown old — that is the History screen's cleanup power. */
 async function applyHostAction(
   ctx: MutationCtx,
   room: Doc<"rooms">,
   tgUserId: number,
-  act: "spin" | "lock" | "end",
+  hostAction: HostAction,
 ) {
   if (room.closedAt) throw new ConvexError("This room is closed.");
   const isStarter = room.tgHostUserId === tgUserId;
 
-  if (act === "end") {
-    if (!isStarter && Date.now() - room.createdAt < OLD_ROUND_CLOSE_MS) {
+  if (hostAction === "end") {
+    if (!isStarter && Date.now() - room.createdAt < ANYONE_CAN_CLOSE_AFTER_MS) {
       throw new ConvexError(
         "Only the person who started this round can close it — anyone can, once it's a day old.",
       );
@@ -183,9 +178,10 @@ async function applyHostAction(
     }
     const options = await roomOptions(ctx, room._id);
     if (options.length === 0) throw new ConvexError("Add at least one option first.");
-    if (act === "spin") {
-      const { winner, spinAngle, wheelOptionIds } = computeSpin(options);
-      await decide(ctx, room, {
+
+    if (hostAction === "spin") {
+      const { winner, spinAngle, wheelOptionIds } = computeSpinResult(options);
+      await recordDecision(ctx, room, {
         mode: "spin",
         winnerId: winner._id,
         votes: winner.voteCount,
@@ -193,25 +189,19 @@ async function applyHostAction(
         wheelOptionIds,
       });
     } else {
-      const winner = pickTop(options);
-      await decide(ctx, room, { mode: "lock", winnerId: winner._id, votes: winner.voteCount });
+      const winner = pickTopVoted(options);
+      await recordDecision(ctx, room, {
+        mode: "lock",
+        winnerId: winner._id,
+        votes: winner.voteCount,
+      });
     }
   }
   return { roomId: room._id, tgChatId: room.tgChatId, tgMessageId: room.tgMessageId };
 }
 
-async function roomOptions(ctx: QueryCtx | MutationCtx, roomId: Id<"rooms">) {
-  const options = await ctx.db
-    .query("options")
-    .withIndex("by_room", (q) => q.eq("roomId", roomId))
-    .collect();
-  options.sort(byVotesDesc);
-  return options;
-}
+// —— Internal queries and mutations ——
 
-// —— Internal queries ——
-
-/** Everything the action layer needs to render the session message. */
 export const sessionState = internalQuery({
   args: { roomId: v.id("rooms") },
   handler: async (ctx, { roomId }) => {
@@ -219,15 +209,13 @@ export const sessionState = internalQuery({
     if (!room) return null;
     const options = await roomOptions(ctx, roomId);
     const winner = room.winnerOptionId
-      ? (options.find((o) => o._id === room.winnerOptionId) ?? null)
+      ? (options.find((option) => option._id === room.winnerOptionId) ?? null)
       : null;
     return { room, options, winner };
   },
 });
 
-// —— Internal mutations ——
-
-/** /munch — create a session, or hand back the one already running. */
+/** /munch — create a round, or hand back the one that just started. */
 export const startSession = internalMutation({
   args: {
     chatId: v.number(),
@@ -244,14 +232,14 @@ export const startSession = internalMutation({
       return { roomId: latest._id, reusedMessageId: latest.tgMessageId };
     }
     const roomId = await ctx.db.insert("rooms", {
-      // The code rides in the Open Munch button's startapp param — it's how
-      // the Mini App finds this room.
+      // This code rides in the Open Munch button's startapp parameter — it's
+      // how the Mini App finds its way back to this room.
       code: crypto.randomUUID(),
       title:
-        clean(args.title ?? "", MAX_TITLE) ||
-        clean(args.chatTitle ?? "", MAX_TITLE) ||
+        tidyText(args.title ?? "", MAX_TITLE_LENGTH) ||
+        tidyText(args.chatTitle ?? "", MAX_TITLE_LENGTH) ||
         randomRoomName(),
-      hostName: clean(args.hostName, MAX_NAME) || "Host",
+      hostName: tidyText(args.hostName, MAX_NAME_LENGTH) || "Host",
       tgChatId: args.chatId,
       tgHostUserId: args.hostTgUserId,
       phase: "collecting",
@@ -261,7 +249,6 @@ export const startSession = internalMutation({
   },
 });
 
-/** Remember which chat message is the live session message (edited in place). */
 export const setSessionMessage = internalMutation({
   args: { roomId: v.id("rooms"), messageId: v.number() },
   handler: async (ctx, { roomId, messageId }) => {
@@ -269,15 +256,17 @@ export const setSessionMessage = internalMutation({
   },
 });
 
-/** Mini App host actions, addressed by room code (the Mini App doesn't know
- *  chat ids). The caller (miniAppHostAction) has verified the signed initData,
- *  which establishes WHO is calling — but a room code is not a secret (it rides
- *  in the chat's Open Munch button and survives forwarding), so identity alone
- *  would let any Telegram user, member or not, drive another group's round.
- *  The access token is what proves current membership, exactly as it does for
- *  every other client-facing write. */
+/** The signed initData establishes WHO is calling, but a room code is not a
+ *  secret — it rides in the Open Munch button and survives forwarding — so
+ *  identity alone would let any Telegram user drive another group's round. The
+ *  access token is what proves current membership. */
 export const hostActionByCode = internalMutation({
-  args: { code: v.string(), token: v.string(), tgUserId: v.number(), act: HOST_ACT },
+  args: {
+    code: v.string(),
+    token: v.string(),
+    tgUserId: v.number(),
+    act: hostActionValidator,
+  },
   handler: async (ctx, { code, token, tgUserId, act }) => {
     const room = await requireRoom(ctx, code);
     const session = await sessionFromToken(ctx, token);
@@ -289,8 +278,8 @@ export const hostActionByCode = internalMutation({
   },
 });
 
-/** Consumes the debounce flag set by scheduleChatRefresh (rooms.ts). Cleared
- *  BEFORE rendering, so activity landing mid-render schedules a fresh pass. */
+/** Cleared BEFORE rendering, so activity landing mid-render schedules a fresh
+ *  pass rather than being swallowed. Set by scheduleChatRefresh in rooms.ts. */
 export const clearRefreshPending = internalMutation({
   args: { roomId: v.id("rooms") },
   handler: async (ctx, { roomId }) => {
@@ -298,16 +287,15 @@ export const clearRefreshPending = internalMutation({
   },
 });
 
-/** Debounced re-render of the chat scoreboard after Mini App activity. */
 export const refreshSession = internalAction({
   args: { roomId: v.id("rooms") },
   handler: async (ctx, { roomId }) => {
     await ctx.runMutation(internal.telegram.clearRefreshPending, { roomId });
-    await refreshSessionMessage(ctx, roomId);
+    await refreshScoreboard(ctx, roomId);
   },
 });
 
-/** Telegram renumbers a chat when a group upgrades to a supergroup. */
+/** Telegram renumbers a chat when a group is upgraded to a supergroup. */
 export const migrateChat = internalMutation({
   args: { fromChatId: v.number(), toChatId: v.number() },
   handler: async (ctx, { fromChatId, toChatId }) => {
@@ -315,49 +303,48 @@ export const migrateChat = internalMutation({
       .query("rooms")
       .withIndex("by_tg_chat", (q) => q.eq("tgChatId", fromChatId))
       .collect();
-    await Promise.all(rooms.map((r) => ctx.db.patch(r._id, { tgChatId: toChatId })));
+    await Promise.all(rooms.map((room) => ctx.db.patch(room._id, { tgChatId: toChatId })));
   },
 });
 
-// —— Rendering ——
+// —— Rendering the chat messages ——
 
-type SessionState = {
+type RoundState = {
   room: Doc<"rooms">;
   options: Doc<"options">[];
   winner: Doc<"options"> | null;
 };
 
-function resultText(state: SessionState): string {
+function resultText(state: RoundState): string {
   const { room, winner } = state;
   if (!winner) return "🔒 This munch is closed.";
   const votes = room.decidedVotes ?? 0;
   const lines = [
-    `🎉 <b>${esc(winner.text)}</b> it is!`,
+    `🎉 <b>${escapeHtml(winner.text)}</b> it is!`,
     room.mode === "spin"
       ? "The wheel has spoken 🎡"
       : `Locked in with ${votes} ${voteWord(votes)} 🔒`,
   ];
   if (winner.suggestedSpot) {
-    lines.push(
-      `😋 Try: <a href="${esc(mapsUrl(winner.suggestedSpot))}">${esc(winner.suggestedSpot)}</a>`,
-    );
+    const link = googleMapsSearchUrl(winner.suggestedSpot);
+    lines.push(`😋 Try: <a href="${escapeHtml(link)}">${escapeHtml(winner.suggestedSpot)}</a>`);
   } else if (winner.kind === "place") {
-    lines.push(`📍 <a href="${esc(mapsUrl(winner.text))}">Open in Maps</a>`);
+    lines.push(`📍 <a href="${escapeHtml(googleMapsSearchUrl(winner.text))}">Open in Maps</a>`);
   }
   return lines.join("\n");
 }
 
-function tallyLines(options: Doc<"options">[], max: number): string {
+function tallyLines(options: Doc<"options">[], maxRows: number): string {
   const lines = options
-    .slice(0, max)
-    .map((o) => `${o.emoji} ${esc(o.text)} — ${o.voteCount}`);
-  if (options.length > max) lines.push(`<i>…and ${options.length - max} more in the app</i>`);
+    .slice(0, maxRows)
+    .map((option) => `${option.emoji} ${escapeHtml(option.text)} — ${option.voteCount}`);
+  if (options.length > maxRows) {
+    lines.push(`<i>…and ${options.length - maxRows} more in the app</i>`);
+  }
   return lines.join("\n");
 }
 
-/** The live session message: a scoreboard the bot edits in place, plus the
- *  one button that matters — 🎡 Open Munch. */
-function renderSession(state: SessionState): {
+function renderScoreboard(state: RoundState): {
   text: string;
   reply_markup?: Record<string, unknown>;
 } {
@@ -365,20 +352,21 @@ function renderSession(state: SessionState): {
 
   if (room.closedAt) {
     const tally = tallyLines(options, 5);
+    const finalTally = tally ? `\n\n<i>Final tally</i>\n${tally}` : "";
     return {
-      text: `🍽 <b>${esc(room.title)}</b>\n\n${resultText(state)}${tally ? `\n\n<i>Final tally</i>\n${tally}` : ""}`,
+      text: `🍽 <b>${escapeHtml(room.title)}</b>\n\n${resultText(state)}${finalTally}`,
     };
   }
 
-  const header = `🍽 <b>${esc(room.title)}</b>\n<i>started by ${esc(room.hostName)}</i>`;
+  const header = `🍽 <b>${escapeHtml(room.title)}</b>\n<i>started by ${escapeHtml(room.hostName)}</i>`;
   const body =
     options.length === 0
       ? "<i>Nothing on the menu yet — open Munch and get us started!</i>"
-      : tallyLines(options, TALLY_MAX);
-  const footer = `<i>Tap 🎡 Open Munch to add cravings &amp; vote. ${esc(room.hostName)} spins the wheel.</i>`;
+      : tallyLines(options, MAX_TALLY_ROWS);
+  const footer = `<i>Tap 🎡 Open Munch to add cravings &amp; vote. ${escapeHtml(room.hostName)} spins the wheel.</i>`;
 
-  // The Mini App opens in-place over the chat, carrying the room code via
-  // startapp (registered with BotFather; see README).
+  // Registered with BotFather; see the README. Without it the round has no
+  // button at all, since there is no other way into the app.
   const miniAppLink = deployEnv().TELEGRAM_MINIAPP_LINK; // e.g. https://t.me/MunchBot/munch
   const button = miniAppLink
     ? { text: "🎡 Open Munch", url: `${miniAppLink.replace(/\/$/, "")}?startapp=${room.code}` }
@@ -390,12 +378,11 @@ function renderSession(state: SessionState): {
   };
 }
 
-/** Re-render the session message in place after any state change. */
-async function refreshSessionMessage(ctx: ActionCtx, roomId: Id<"rooms">) {
+async function refreshScoreboard(ctx: ActionCtx, roomId: Id<"rooms">) {
   const state = await ctx.runQuery(internal.telegram.sessionState, { roomId });
   if (!state || state.room.tgMessageId === undefined) return;
-  const { text, reply_markup } = renderSession(state);
-  await tg("editMessageText", {
+  const { text, reply_markup } = renderScoreboard(state);
+  await callTelegram("editMessageText", {
     chat_id: state.room.tgChatId,
     message_id: state.room.tgMessageId,
     text,
@@ -405,14 +392,14 @@ async function refreshSessionMessage(ctx: ActionCtx, roomId: Id<"rooms">) {
   });
 }
 
-/** Final render + a fresh announcement message (a new message notifies the
- *  chat; an edit wouldn't). Runs via the scheduler after the spin drumroll. */
-async function announce(ctx: ActionCtx, roomId: Id<"rooms">) {
+/** Posts a brand-new message rather than editing: a new message notifies the
+ *  chat, where an edit wouldn't. */
+async function announceWinner(ctx: ActionCtx, roomId: Id<"rooms">) {
   const state = await ctx.runQuery(internal.telegram.sessionState, { roomId });
   if (!state) return;
-  await refreshSessionMessage(ctx, roomId);
+  await refreshScoreboard(ctx, roomId);
   if (state.winner) {
-    await tg("sendMessage", {
+    await callTelegram("sendMessage", {
       chat_id: state.room.tgChatId,
       text: resultText(state),
       parse_mode: "HTML",
@@ -424,37 +411,36 @@ async function announce(ctx: ActionCtx, roomId: Id<"rooms">) {
 export const announceResult = internalAction({
   args: { roomId: v.id("rooms") },
   handler: async (ctx, { roomId }) => {
-    await announce(ctx, roomId);
+    await announceWinner(ctx, roomId);
   },
 });
 
-/** Chat aftermath of a Mini App host action: drumroll + scheduled reveal for
- *  spin (the app's wheel is animating meanwhile), immediate announcement for
- *  lock, a final re-render for end. */
-async function afterHostAction(
+/** A spin gets a drumroll and a scheduled reveal, because the app's wheel is
+ *  animating for those same few seconds and the chat shouldn't spoil it. */
+async function playOutHostAction(
   ctx: ActionCtx,
-  act: "spin" | "lock" | "end",
-  res: { roomId: Id<"rooms">; tgChatId: number; tgMessageId?: number },
+  hostAction: HostAction,
+  round: { roomId: Id<"rooms">; tgChatId: number; tgMessageId?: number },
 ) {
-  if (act === "spin") {
-    if (res.tgMessageId !== undefined) {
-      await tg("editMessageText", {
-        chat_id: res.tgChatId,
-        message_id: res.tgMessageId,
+  if (hostAction === "spin") {
+    if (round.tgMessageId !== undefined) {
+      await callTelegram("editMessageText", {
+        chat_id: round.tgChatId,
+        message_id: round.tgMessageId,
         text: "🥁 Spinning the wheel…",
       });
     }
     await ctx.scheduler.runAfter(SPIN_SUSPENSE_MS, internal.telegram.announceResult, {
-      roomId: res.roomId,
+      roomId: round.roomId,
     });
-  } else if (act === "lock") {
-    await announce(ctx, res.roomId);
+  } else if (hostAction === "lock") {
+    await announceWinner(ctx, round.roomId);
   } else {
-    await refreshSessionMessage(ctx, res.roomId);
+    await refreshScoreboard(ctx, round.roomId);
   }
 }
 
-// —— Mini App ——
+// —— Mini App identity ——
 
 async function hmacSha256(key: BufferSource, data: string): Promise<ArrayBuffer> {
   const cryptoKey = await crypto.subtle.importKey(
@@ -467,28 +453,29 @@ async function hmacSha256(key: BufferSource, data: string): Promise<ArrayBuffer>
   return crypto.subtle.sign("HMAC", cryptoKey, new TextEncoder().encode(data));
 }
 
-const INIT_DATA_MAX_AGE_S = 24 * 60 * 60;
+const INIT_DATA_MAX_AGE_SECONDS = 24 * 60 * 60;
 
-/** Verify a Mini App's signed initData (HMAC chain per Telegram's spec) and
- *  return the authenticated user. This is what makes Mini App host actions
- *  trustworthy — the client can't forge who it is. */
+/** Telegram's HMAC chain. This is what makes Mini App host actions
+ *  trustworthy: the client cannot forge who it is. */
 async function verifyInitData(initData: string): Promise<TgUser> {
   const params = new URLSearchParams(initData);
-  const hash = params.get("hash");
-  if (!hash) throw new ConvexError("Open this from your Telegram chat.");
+  const claimedHash = params.get("hash");
+  if (!claimedHash) throw new ConvexError("Open this from your Telegram chat.");
   params.delete("hash");
   const dataCheckString = [...params.entries()]
     .sort(([a], [b]) => (a < b ? -1 : 1))
-    .map(([k, value]) => `${k}=${value}`)
+    .map(([key, value]) => `${key}=${value}`)
     .join("\n");
 
   const secret = await hmacSha256(new TextEncoder().encode("WebAppData"), botToken());
   const signature = await hmacSha256(secret, dataCheckString);
-  const hex = [...new Uint8Array(signature)].map((b) => b.toString(16).padStart(2, "0")).join("");
-  if (hex !== hash) throw new ConvexError("Couldn't verify your Telegram session.");
+  const signatureHex = [...new Uint8Array(signature)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  if (signatureHex !== claimedHash) throw new ConvexError("Couldn't verify your Telegram session.");
 
   const authDate = Number(params.get("auth_date") ?? 0);
-  if (!authDate || Date.now() / 1000 - authDate > INIT_DATA_MAX_AGE_S) {
+  if (!authDate || Date.now() / 1000 - authDate > INIT_DATA_MAX_AGE_SECONDS) {
     throw new ConvexError("This session expired — reopen Munch from the chat.");
   }
   const user = JSON.parse(params.get("user") ?? "null") as TgUser | null;
@@ -496,72 +483,70 @@ async function verifyInitData(initData: string): Promise<TgUser> {
   return user;
 }
 
-/** Spin / lock / end from inside the Mini App. Verifies the signed Telegram
- *  identity and the room access token (identity + current group membership),
- *  applies the decision, then plays out the chat-side effects. */
 export const miniAppHostAction = action({
-  args: { initData: v.string(), code: v.string(), token: v.string(), act: HOST_ACT },
+  args: {
+    initData: v.string(),
+    code: v.string(),
+    token: v.string(),
+    act: hostActionValidator,
+  },
   handler: async (ctx, { initData, code, token, act }) => {
     const user = await verifyInitData(initData);
-    const res = await ctx.runMutation(internal.telegram.hostActionByCode, {
+    const round = await ctx.runMutation(internal.telegram.hostActionByCode, {
       code,
       token,
       tgUserId: user.id,
       act,
     });
-    await afterHostAction(ctx, act, res);
+    await playOutHostAction(ctx, act, round);
   },
 });
 
-// —— Access grants (group-membership gate) ——
+// —— Access grants (the group-membership gate) ——
 
-// A grant is valid this long; the client refreshes well before expiry.
-const SESSION_TTL_MS = 60 * 60 * 1000;
-// Within this window of the last check, enterRoom trusts the existing grant
-// and skips the getChatMember round-trip (bounds re-checks on rapid reopens).
-const SESSION_RECHECK_MS = 4 * 60 * 1000;
+const GRANT_LIFETIME_MS = 60 * 60 * 1000;
+/** Inside this window enterRoom trusts the existing grant and skips the
+ *  getChatMember round-trip, which bounds re-checks on rapid reopens. */
+const MEMBERSHIP_RECHECK_AFTER_MS = 4 * 60 * 1000;
 
-/** Is this user a current member of the chat? Fails CLOSED — a Telegram API
- *  error or an unrecognized status denies access. */
+/** Fails CLOSED: a Telegram API error or an unrecognized status denies access. */
 async function isChatMember(chatId: number, userId: number): Promise<boolean> {
-  const res = (await tg("getChatMember", { chat_id: chatId, user_id: userId })) as {
-    status?: string;
-    is_member?: boolean;
-  } | null;
-  if (!res) return false;
-  if (res.status === "creator" || res.status === "administrator" || res.status === "member") {
-    return true;
-  }
-  // A "restricted" user is still in the group only if is_member is true.
-  if (res.status === "restricted") return res.is_member === true;
+  const result = (await callTelegram("getChatMember", {
+    chat_id: chatId,
+    user_id: userId,
+  })) as { status?: string; is_member?: boolean } | null;
+  if (!result) return false;
+  const { status } = result;
+  if (status === "creator" || status === "administrator" || status === "member") return true;
+  // A "restricted" user is still in the group only if is_member says so.
+  if (status === "restricted") return result.is_member === true;
   return false; // left, kicked, or anything unexpected
 }
 
-/** The chat a room belongs to (enterRoom needs it before any grant exists). */
+/** enterRoom needs this before any grant exists to read the room through. */
 export const roomChatByCode = internalQuery({
   args: { code: v.string() },
   handler: async (ctx, { code }) => {
-    const room = await roomByCode(ctx, code);
+    const room = await findRoomByCode(ctx, code);
     return room ? { tgChatId: room.tgChatId } : null;
   },
 });
 
-/** The live grant for this member in this chat (for the re-check short-circuit). */
 export const sessionFor = internalQuery({
   args: { tgChatId: v.number(), tgUserId: v.number() },
   handler: async (ctx, { tgChatId, tgUserId }) => {
-    const s = await ctx.db
+    const grant = await ctx.db
       .query("roomSessions")
       .withIndex("by_chat_user", (q) => q.eq("tgChatId", tgChatId).eq("tgUserId", tgUserId))
       .unique();
-    if (!s || s.expiresAt < Date.now()) return null;
-    return { token: s.token, checkedAt: s.checkedAt };
+    if (!grant || grant.expiresAt < Date.now()) return null;
+    return { token: grant.token, checkedAt: grant.checkedAt };
   },
 });
 
-/** Mint or refresh a member's grant. One row per (chat, user): the token is
- *  stable across reopens so old tabs keep working; expiry always extends.
- *  `recheck` marks that getChatMember just succeeded (resets the re-check clock). */
+/** One row per chat and user: the token stays the same across reopens so old
+ *  tabs keep working, and expiry always extends. `recheck` records that
+ *  getChatMember just succeeded. */
 export const upsertSession = internalMutation({
   args: { tgChatId: v.number(), tgUserId: v.number(), name: v.string(), recheck: v.boolean() },
   handler: async (ctx, { tgChatId, tgUserId, name, recheck }) => {
@@ -572,10 +557,10 @@ export const upsertSession = internalMutation({
       .unique();
     const patch = {
       name,
-      expiresAt: now + SESSION_TTL_MS,
+      expiresAt: now + GRANT_LIFETIME_MS,
       ...(recheck ? { checkedAt: now } : {}),
       // A real grant is never dev-exempt, even if devGrantSession seeded this
-      // row first (patching a field to undefined clears it).
+      // row first — patching a field to undefined clears it.
       dev: undefined,
     };
     if (existing) {
@@ -589,13 +574,12 @@ export const upsertSession = internalMutation({
       tgUserId,
       name,
       checkedAt: now,
-      expiresAt: now + SESSION_TTL_MS,
+      expiresAt: now + GRANT_LIFETIME_MS,
     });
     return token;
   },
 });
 
-/** Revoke a member's grant (they left / were kicked). */
 export const dropSession = internalMutation({
   args: { tgChatId: v.number(), tgUserId: v.number() },
   handler: async (ctx, { tgChatId, tgUserId }) => {
@@ -607,27 +591,24 @@ export const dropSession = internalMutation({
   },
 });
 
-/** The entry gate. The Mini App calls this before rendering a room: verify the
- *  signed Telegram identity, confirm the user is a CURRENT member of the room's
- *  group (getChatMember), and hand back an access token the room reads/writes
- *  present. Re-checks membership on every entry (after a short grace window)
- *  and the client re-calls it periodically, so leaving/being kicked revokes
- *  access within minutes. */
+/** The entry gate, called before a room renders. Membership is re-checked on
+ *  entry after a short grace window and the client re-calls this periodically,
+ *  so leaving or being kicked revokes access within minutes. */
 export const enterRoom = action({
   args: { initData: v.string(), code: v.string() },
   handler: async (ctx, { initData, code }): Promise<{ token: string }> => {
     const user = await verifyInitData(initData);
-    const rc = await ctx.runQuery(internal.telegram.roomChatByCode, { code });
-    if (!rc) throw new ConvexError("That round isn't here.");
+    const roomChat = await ctx.runQuery(internal.telegram.roomChatByCode, { code });
+    if (!roomChat) throw new ConvexError("That round isn't here.");
 
     const existing = await ctx.runQuery(internal.telegram.sessionFor, {
-      tgChatId: rc.tgChatId,
+      tgChatId: roomChat.tgChatId,
       tgUserId: user.id,
     });
-    // Fresh grant → trust it, just extend expiry (no getChatMember round-trip).
-    if (existing && Date.now() - existing.checkedAt < SESSION_RECHECK_MS) {
+    // Recently checked, so trust it and just extend the expiry.
+    if (existing && Date.now() - existing.checkedAt < MEMBERSHIP_RECHECK_AFTER_MS) {
       const token = await ctx.runMutation(internal.telegram.upsertSession, {
-        tgChatId: rc.tgChatId,
+        tgChatId: roomChat.tgChatId,
         tgUserId: user.id,
         name: displayName(user),
         recheck: false,
@@ -635,17 +616,15 @@ export const enterRoom = action({
       return { token };
     }
 
-    if (!(await isChatMember(rc.tgChatId, user.id))) {
+    if (!(await isChatMember(roomChat.tgChatId, user.id))) {
       await ctx.runMutation(internal.telegram.dropSession, {
-        tgChatId: rc.tgChatId,
+        tgChatId: roomChat.tgChatId,
         tgUserId: user.id,
       });
-      throw new ConvexError(
-        "You're not in this group. Open Munch from the group chat to join in.",
-      );
+      throw new ConvexError("You're not in this group. Open Munch from the group chat to join in.");
     }
     const token = await ctx.runMutation(internal.telegram.upsertSession, {
-      tgChatId: rc.tgChatId,
+      tgChatId: roomChat.tgChatId,
       tgUserId: user.id,
       name: displayName(user),
       recheck: true,
@@ -655,12 +634,12 @@ export const enterRoom = action({
 });
 
 /** DEV ONLY: mint a grant with no membership check, for browser testing
- *  (npx convex run telegram:devGrantSession '{...}'). Internal — not reachable
- *  from any client; the real gate is enterRoom. */
+ *  (npx convex run telegram:devGrantSession '{...}'). Internal, so no client
+ *  can reach it — the real gate is enterRoom. */
 export const devGrantSession = internalMutation({
   args: { code: v.string(), tgUserId: v.number(), name: v.string() },
   handler: async (ctx, { code, tgUserId, name }) => {
-    const room = await roomByCode(ctx, code);
+    const room = await findRoomByCode(ctx, code);
     if (!room) throw new ConvexError("No such room.");
     const now = Date.now();
     const existing = await ctx.db
@@ -671,7 +650,7 @@ export const devGrantSession = internalMutation({
       await ctx.db.patch(existing._id, {
         name,
         checkedAt: now,
-        expiresAt: now + SESSION_TTL_MS,
+        expiresAt: now + GRANT_LIFETIME_MS,
         dev: true,
       });
       return existing.token;
@@ -683,26 +662,27 @@ export const devGrantSession = internalMutation({
       tgUserId,
       name,
       checkedAt: now,
-      expiresAt: now + SESSION_TTL_MS,
+      expiresAt: now + GRANT_LIFETIME_MS,
       // Never membership-checked, so exempt from the staleness bound that
-      // revokes real grants — a browser-dev token has nothing to re-check.
+      // revokes real grants — there is nothing to re-check.
       dev: true,
     });
     return token;
   },
 });
 
-// —— Update handling ——
+// —— Handling updates from Telegram ——
 
-/** Run a step; on a friendly ConvexError, reply it into the chat. */
-async function replyOnError(chatId: number, replyToMessageId: number, fn: () => Promise<void>) {
+/** ConvexError carries a message meant for humans, so that one gets replied
+ *  into the chat; anything else is a bug and gets a generic apology. */
+async function replyOnError(chatId: number, replyToMessageId: number, step: () => Promise<void>) {
   try {
-    await fn();
+    await step();
   } catch (err) {
     const text =
       err instanceof ConvexError ? String(err.data) : "Something went wrong — try again.";
     if (!(err instanceof ConvexError)) console.error("telegram handler failed", err);
-    await tg("sendMessage", {
+    await callTelegram("sendMessage", {
       chat_id: chatId,
       text,
       reply_parameters: { message_id: replyToMessageId, allow_sending_without_reply: true },
@@ -711,109 +691,118 @@ async function replyOnError(chatId: number, replyToMessageId: number, fn: () => 
 }
 
 function parseCommand(text: string): { name: string; args: string } | null {
-  const m = /^\/([a-zA-Z_]+)(?:@\w+)?(?:\s+([\s\S]+))?$/.exec(text);
-  return m ? { name: m[1].toLowerCase(), args: (m[2] ?? "").trim() } : null;
+  const match = /^\/([a-zA-Z_]+)(?:@\w+)?(?:\s+([\s\S]+))?$/.exec(text);
+  return match ? { name: match[1].toLowerCase(), args: (match[2] ?? "").trim() } : null;
 }
 
-/** Buttons no longer carry actions — anything tapped on an old session
+/** Buttons no longer carry actions, so anything tapped on an old scoreboard
  *  message just gets pointed at the app. */
-async function onCallback(cb: TgCallbackQuery) {
-  await tg("answerCallbackQuery", {
-    callback_query_id: cb.id,
+async function onCallbackQuery(query: TgCallbackQuery) {
+  await callTelegram("answerCallbackQuery", {
+    callback_query_id: query.id,
     text: "Munch lives in the app now — tap 🎡 Open Munch on the round's message.",
   });
 }
 
-async function onMessage(ctx: ActionCtx, msg: TgMessage) {
-  const chat = msg.chat;
+async function startRound(ctx: ActionCtx, chat: TgChat, from: TgUser, title: string) {
+  const round = await ctx.runMutation(internal.telegram.startSession, {
+    chatId: chat.id,
+    ...(chat.title ? { chatTitle: chat.title } : {}),
+    hostTgUserId: from.id,
+    hostName: displayName(from),
+    ...(title ? { title } : {}),
+  });
+  // Always (re)post, so the scoreboard is the newest thing in the chat.
+  const state = await ctx.runQuery(internal.telegram.sessionState, { roomId: round.roomId });
+  if (!state) return;
+  const { text, reply_markup } = renderScoreboard(state);
+  const sent = (await callTelegram("sendMessage", {
+    chat_id: chat.id,
+    text,
+    parse_mode: "HTML",
+    ...(reply_markup ? { reply_markup } : {}),
+    link_preview_options: { is_disabled: true },
+  })) as { message_id?: number } | null;
+  if (!sent?.message_id) return;
 
-  if (msg.migrate_to_chat_id !== undefined) {
+  await ctx.runMutation(internal.telegram.setSessionMessage, {
+    roomId: round.roomId,
+    messageId: sent.message_id,
+  });
+  // Point the superseded copy at the new one, so a duplicate scoreboard doesn't
+  // linger further up the chat.
+  if (round.reusedMessageId && round.reusedMessageId !== sent.message_id) {
+    await callTelegram("editMessageText", {
+      chat_id: chat.id,
+      message_id: round.reusedMessageId,
+      text: "⬇️ This munch moved to a newer message below.",
+    });
+  }
+}
+
+async function onMessage(ctx: ActionCtx, message: TgMessage) {
+  const chat = message.chat;
+
+  if (message.migrate_to_chat_id !== undefined) {
     await ctx.runMutation(internal.telegram.migrateChat, {
       fromChatId: chat.id,
-      toChatId: msg.migrate_to_chat_id,
+      toChatId: message.migrate_to_chat_id,
     });
     return;
   }
 
-  const isGroup = chat.type === "group" || chat.type === "supergroup";
+  const isGroupChat = chat.type === "group" || chat.type === "supergroup";
 
   // Introduce ourselves when added to a group.
-  if (isGroup && msg.new_chat_members?.some((m) => m.id === botId())) {
-    await tg("sendMessage", { chat_id: chat.id, text: HELP, parse_mode: "HTML" });
+  if (isGroupChat && message.new_chat_members?.some((member) => member.id === botUserId())) {
+    await callTelegram("sendMessage", { chat_id: chat.id, text: HELP, parse_mode: "HTML" });
     return;
   }
 
-  const text = (msg.text ?? "").trim();
-  if (!text || !msg.from || msg.from.is_bot) return;
-  const from = msg.from;
-  const cmd = parseCommand(text);
-  if (!cmd) return;
+  const text = (message.text ?? "").trim();
+  if (!text || !message.from || message.from.is_bot) return;
+  const command = parseCommand(text);
+  if (!command) return;
 
-  if (!isGroup) {
-    // Private chats are just an onboarding surface.
-    await tg("sendMessage", { chat_id: chat.id, text: PRIVATE_HELP, parse_mode: "HTML" });
+  if (!isGroupChat) {
+    // Private chats are only an onboarding surface.
+    await callTelegram("sendMessage", {
+      chat_id: chat.id,
+      text: PRIVATE_CHAT_HELP,
+      parse_mode: "HTML",
+    });
     return;
   }
 
-  switch (cmd.name) {
+  switch (command.name) {
     case "start":
     case "help":
-      await tg("sendMessage", { chat_id: chat.id, text: HELP, parse_mode: "HTML" });
+      await callTelegram("sendMessage", { chat_id: chat.id, text: HELP, parse_mode: "HTML" });
       return;
 
-    case "munch":
-      await replyOnError(chat.id, msg.message_id, async () => {
-        const res = await ctx.runMutation(internal.telegram.startSession, {
-          chatId: chat.id,
-          ...(chat.title ? { chatTitle: chat.title } : {}),
-          hostTgUserId: from.id,
-          hostName: displayName(from),
-          ...(cmd.args ? { title: cmd.args } : {}),
-        });
-        // (Re)post the session message so it's the newest thing in the chat.
-        const state = await ctx.runQuery(internal.telegram.sessionState, { roomId: res.roomId });
-        if (!state) return;
-        const { text: body, reply_markup } = renderSession(state);
-        const sent = (await tg("sendMessage", {
-          chat_id: chat.id,
-          text: body,
-          parse_mode: "HTML",
-          ...(reply_markup ? { reply_markup } : {}),
-          link_preview_options: { is_disabled: true },
-        })) as { message_id?: number } | null;
-        if (sent?.message_id) {
-          await ctx.runMutation(internal.telegram.setSessionMessage, {
-            roomId: res.roomId,
-            messageId: sent.message_id,
-          });
-          // Point the superseded copy at the new one so a duplicate scoreboard
-          // doesn't linger mid-chat.
-          if (res.reusedMessageId && res.reusedMessageId !== sent.message_id) {
-            await tg("editMessageText", {
-              chat_id: chat.id,
-              message_id: res.reusedMessageId,
-              text: "⬇️ This munch moved to a newer message below.",
-            });
-          }
-        }
-      });
+    case "munch": {
+      const from = message.from;
+      await replyOnError(chat.id, message.message_id, () =>
+        startRound(ctx, chat, from, command.args),
+      );
       return;
+    }
 
     default:
-      // Not ours (or a typo) — stay quiet in the group.
+      // Not ours, or a typo — stay quiet in the group.
       return;
   }
 }
 
-/** Entry point: one Telegram update, dispatched. Never throws — the webhook
- *  must always 200, or Telegram re-delivers the same update in a retry storm. */
+/** One Telegram update, dispatched. Never throws: the webhook must always
+ *  answer 200, or Telegram re-delivers the same update in a retry storm. */
 export const handleUpdate = internalAction({
   args: { update: v.any() },
   handler: async (ctx, { update }) => {
-    const u = update as TgUpdate;
+    const tgUpdate = update as TgUpdate;
     try {
-      if (u.callback_query) await onCallback(u.callback_query);
-      else if (u.message) await onMessage(ctx, u.message);
+      if (tgUpdate.callback_query) await onCallbackQuery(tgUpdate.callback_query);
+      else if (tgUpdate.message) await onMessage(ctx, tgUpdate.message);
     } catch (err) {
       console.error("telegram update failed", err);
     }

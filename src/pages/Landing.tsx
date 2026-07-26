@@ -1,10 +1,7 @@
-/**
- * The web root is just a signpost — Munch lives in Telegram. The hosted site
- * exists to serve the Mini App; there is no standalone web experience.
- */
+/** The web root is just a signpost — the hosted site exists to serve the Mini
+ *  App, and there is no standalone web experience. */
 export default function Landing() {
-  // Optional: set VITE_TELEGRAM_BOT_LINK (e.g. https://t.me/YourMunchBot) at
-  // build time to render a button straight to the bot.
+  // Set VITE_TELEGRAM_BOT_LINK at build time to render a button to the bot.
   const botLink = import.meta.env.VITE_TELEGRAM_BOT_LINK;
 
   return (

@@ -2,43 +2,42 @@ import { useEffect, useReducer } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAction, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { OLD_ROUND_CLOSE_MS } from "../../convex/lib";
+import { ANYONE_CAN_CLOSE_AFTER_MS } from "../../convex/lib";
 import { useRoomSession } from "../lib/session";
-import { isTelegram, tgInitData } from "../lib/telegram";
+import { isTelegram, signedInitData } from "../lib/telegram";
 import { alertError, tileColor } from "../lib/ui";
 import { LoadingScreen } from "../components/LoadingScreen";
 import { NoticeScreen } from "../components/NoticeScreen";
 
-/**
- * Every round this group has run, newest first — the live ones, and what won
- * in the finished ones. Reached from a room via "🗂 All rounds", so the URL
- * carries that room's code, which the access gate exchanges for a token.
- * Tapping a round opens it; lingering open rounds can be closed from here (the
- * starter anytime, anyone once the round is a day old — enforced server-side).
- */
+const AGE_RECHECK_MS = 60_000;
+
+/** Reached from a room, so the URL carries that room's code — which the access
+ *  gate exchanges for a token covering the whole group. */
 export default function History() {
   const { code = "" } = useParams();
   const session = useRoomSession(code);
   const token = session.status === "ok" ? session.token : null;
   const rounds = useQuery(api.rooms.groupHistory, token ? { code, token } : "skip");
-  // Closing is just the "end" host action, aimed at an old round by its code.
-  const hostAction = useAction(api.telegram.miniAppHostAction);
+  // Closing a round is just the "end" host action, aimed at it by its own code.
+  const runHostAction = useAction(api.telegram.miniAppHostAction);
 
-  // Closability depends on wall-clock age, and neither the reactive query nor
-  // React re-runs as time passes — so re-render once a minute to let rounds
-  // crossing the age threshold grow their Close button while the page is open.
-  const [, tick] = useReducer((n: number) => n + 1, 0);
+  // Neither the reactive query nor React re-runs as time passes, so re-render
+  // once a minute to let a round crossing the age threshold grow its Close
+  // button while the page is open.
+  const [, recheckAges] = useReducer((tick: number) => tick + 1, 0);
   useEffect(() => {
-    const id = setInterval(tick, 60_000);
-    return () => clearInterval(id);
+    const intervalId = setInterval(recheckAges, AGE_RECHECK_MS);
+    return () => clearInterval(intervalId);
   }, []);
 
-  function onClose(roundCode: string, title: string) {
+  function closeRound(roundCode: string, title: string) {
     if (!token) return;
     if (!confirm(`Close "${title}" for everyone?`)) return;
-    // The token is minted per chat, not per round, so it authorizes closing any
-    // round in this group — which is exactly what the server checks.
-    hostAction({ initData: tgInitData, code: roundCode, token, act: "end" }).catch(alertError);
+    // The token is minted per chat rather than per round, so it authorizes
+    // closing any round in this group — which is exactly what the server checks.
+    runHostAction({ initData: signedInitData, code: roundCode, token, act: "end" }).catch(
+      alertError,
+    );
   }
 
   if (session.status === "loading") return <LoadingScreen />;
@@ -61,42 +60,49 @@ export default function History() {
         <div className="empty">No rounds here yet.</div>
       ) : (
         <div className="options">
-          {rounds.map((r) => {
-            const date = new Date(r.createdAt).toLocaleDateString(undefined, {
+          {rounds.map((round) => {
+            const startedOn = new Date(round.createdAt).toLocaleDateString(undefined, {
               month: "short",
               day: "numeric",
             });
-            // Derived at render time (not in the reactive query) so it stays
-            // truthful as rounds age — the server re-checks on the mutation.
-            const closable =
-              !r.closedAt && (r.mine || Date.now() - r.createdAt > OLD_ROUND_CLOSE_MS);
+            // Derived here rather than in the query so it stays truthful as
+            // rounds age; the server re-checks it on the mutation anyway.
+            const canClose =
+              !round.closedAt &&
+              (round.mine || Date.now() - round.createdAt > ANYONE_CAN_CLOSE_AFTER_MS);
+            const outcome = round.winner
+              ? ` · 🏆 ${round.winner.text}`
+              : round.closedAt
+                ? " · no pick"
+                : "";
+
             return (
-              <div key={r.code} className="option-row option-row--readonly">
-                <Link to={`/r/${r.code}`} className="history-link">
-                  <div className="option-emoji" style={{ background: tileColor(r.code) }}>
-                    {r.winner?.emoji ?? (r.closedAt ? "🌙" : "🍽")}
+              <div key={round.code} className="option-row option-row--readonly">
+                <Link to={`/r/${round.code}`} className="history-link">
+                  <div className="option-emoji" style={{ background: tileColor(round.code) }}>
+                    {round.winner?.emoji ?? (round.closedAt ? "🌙" : "🍽")}
                   </div>
                   <div className="option-main">
-                    <div className="option-name">{r.title}</div>
+                    <div className="option-name">{round.title}</div>
                     <div className="option-meta">
                       <span>
-                        {date} · by {r.hostName}
-                        {r.winner ? ` · 🏆 ${r.winner.text}` : r.closedAt ? " · no pick" : ""}
+                        {startedOn} · by {round.hostName}
+                        {outcome}
                       </span>
                     </div>
                   </div>
                 </Link>
-                {r.closedAt ? (
+                {round.closedAt ? (
                   <span className="closed-badge">closed 🌙</span>
                 ) : (
                   <span className="live-dot">LIVE</span>
                 )}
-                {isTelegram && closable && (
+                {isTelegram && canClose && (
                   <button
                     type="button"
                     className="linklike history-close"
-                    onClick={() => onClose(r.code, r.title)}
-                    aria-label={`Close ${r.title}`}>
+                    onClick={() => closeRound(round.code, round.title)}
+                    aria-label={`Close ${round.title}`}>
                     Close
                   </button>
                 )}

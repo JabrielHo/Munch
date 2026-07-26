@@ -1,36 +1,35 @@
 import { useState } from "react";
-import { ACCENT_COLORS as COLORS } from "../lib/ui";
+import { ACCENT_COLORS } from "../lib/ui";
 
-/**
- * A one-shot burst of CSS-shape particles (no library, on-brand colors).
- * Particle layout is randomized once via a lazy initializer so it stays fixed
- * across re-renders — no effect needed.
- */
+const PIECE_COUNT = 44;
+
+/** Randomized once in a lazy initializer, so the pieces stay put across
+ *  re-renders instead of teleporting mid-fall. */
 export function Confetti() {
   const [pieces] = useState(() =>
-    Array.from({ length: 44 }, (_, i) => ({
-      left: Math.random() * 100,
-      delay: Math.random() * 0.5,
-      duration: 2.4 + Math.random() * 1.8,
-      rotate: Math.random() * 360,
-      color: COLORS[i % COLORS.length],
-      round: Math.random() > 0.5,
+    Array.from({ length: PIECE_COUNT }, (_, index) => ({
+      leftPercent: Math.random() * 100,
+      delaySeconds: Math.random() * 0.5,
+      durationSeconds: 2.4 + Math.random() * 1.8,
+      rotateDegrees: Math.random() * 360,
+      color: ACCENT_COLORS[index % ACCENT_COLORS.length],
+      isRound: Math.random() > 0.5,
     })),
   );
 
   return (
     <div className="confetti" aria-hidden="true">
-      {pieces.map((p, i) => (
+      {pieces.map((piece, index) => (
         <span
-          key={i}
+          key={index}
           className="confetti-piece"
           style={{
-            left: `${p.left}%`,
-            background: p.color,
-            borderRadius: p.round ? "50%" : "3px",
-            transform: `rotate(${p.rotate}deg)`,
-            animationDuration: `${p.duration}s`,
-            animationDelay: `${p.delay}s`,
+            left: `${piece.leftPercent}%`,
+            background: piece.color,
+            borderRadius: piece.isRound ? "50%" : "3px",
+            transform: `rotate(${piece.rotateDegrees}deg)`,
+            animationDuration: `${piece.durationSeconds}s`,
+            animationDelay: `${piece.delaySeconds}s`,
           }}
         />
       ))}

@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 
-/** A full-screen dead-end message — round not found, or access denied. */
+/** A full-screen dead end — round not found, or access denied. */
 export function NoticeScreen({ message }: { message: string }) {
   return (
     <div className="screen home">

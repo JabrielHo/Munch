@@ -1,21 +1,21 @@
 import { useEffect, useState } from "react";
 import { useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { isTelegram, tgInitData } from "./telegram";
-import { humanError } from "./ui";
+import { isTelegram, signedInitData } from "./telegram";
+import { readableError } from "./ui";
 
 /**
- * The room access gate. Before rendering a room or its history, the app trades
- * its signed Telegram identity for a short-lived access token by calling
- * `enterRoom` — which the server only grants after confirming the user is a
- * current member of the room's group. Every read/write then presents the
- * token, so a non-member (or a forwarded link) gets nowhere.
+ * The room access gate. Before a room renders, the app trades its signed
+ * Telegram identity for a short-lived token via `enterRoom`, which the server
+ * only grants to a current member of the room's group. Every read and write
+ * then presents that token, so someone forwarded the link gets nowhere.
  *
- * The token is refreshed on an interval so membership is re-checked while the
- * page stays open — leaving or being kicked revokes access within minutes.
+ * Refreshing on an interval is what keeps membership being re-checked while the
+ * page stays open, so leaving the group revokes access within minutes.
  */
+
 const TOKEN_KEY = "munch.token";
-const REFRESH_MS = 5 * 60 * 1000;
+const TOKEN_REFRESH_MS = 5 * 60 * 1000;
 
 export type SessionState =
   | { status: "loading" }
@@ -23,51 +23,53 @@ export type SessionState =
   | { status: "denied"; message: string };
 
 export function useRoomSession(code: string): SessionState {
-  const enter = useAction(api.telegram.enterRoom);
+  const enterRoom = useAction(api.telegram.enterRoom);
   const [state, setState] = useState<SessionState>({ status: "loading" });
 
   useEffect(() => {
     if (!code) return;
-    let alive = true;
+    let stillMounted = true;
 
-    async function sync() {
-      // Outside Telegram (browser dev) there's no initData to verify — fall
-      // back to a manually-seeded token (npx convex run telegram:devGrantSession).
+    async function refreshToken() {
+      // Outside Telegram (browser dev) there is no initData to verify, so fall
+      // back to a token seeded by hand with telegram:devGrantSession.
       if (!isTelegram) {
-        const t = localStorage.getItem(TOKEN_KEY);
-        if (alive) {
-          setState(
-            t
-              ? { status: "ok", token: t }
-              : { status: "denied", message: "Open Munch from your Telegram group chat." },
-          );
-        }
+        const devToken = localStorage.getItem(TOKEN_KEY);
+        if (!stillMounted) return;
+        setState(
+          devToken
+            ? { status: "ok", token: devToken }
+            : { status: "denied", message: "Open Munch from your Telegram group chat." },
+        );
         return;
       }
+
       try {
-        const { token } = await enter({ initData: tgInitData, code });
+        const { token } = await enterRoom({ initData: signedInitData, code });
         localStorage.setItem(TOKEN_KEY, token);
-        if (alive) setState({ status: "ok", token });
+        if (stillMounted) setState({ status: "ok", token });
       } catch (err) {
-        const message = humanError(err);
+        const message = readableError(err);
         const membershipDenied = message.includes("not in this group");
-        // A transient failure on an already-open session keeps the room up;
-        // only a real membership denial (or the initial load) shows the wall.
-        if (alive) {
-          setState((prev) =>
-            membershipDenied || prev.status !== "ok" ? { status: "denied", message } : prev,
+        // A transient failure on an already-open session keeps the room up.
+        // Only a real membership denial — or a failure on first load — walls it off.
+        if (stillMounted) {
+          setState((previous) =>
+            membershipDenied || previous.status !== "ok"
+              ? { status: "denied", message }
+              : previous,
           );
         }
       }
     }
 
-    void sync();
-    const id = setInterval(() => void sync(), REFRESH_MS);
+    void refreshToken();
+    const intervalId = setInterval(() => void refreshToken(), TOKEN_REFRESH_MS);
     return () => {
-      alive = false;
-      clearInterval(id);
+      stillMounted = false;
+      clearInterval(intervalId);
     };
-  }, [code, enter]);
+  }, [code, enterRoom]);
 
   return state;
 }

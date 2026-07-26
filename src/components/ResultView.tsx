@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { mapsUrl, tileColor } from "../lib/ui";
+import { googleMapsSearchUrl, tileColor } from "../lib/ui";
 import { voteWord } from "../../convex/lib";
 import type { PublicRoom, PublicOption } from "../lib/types";
 import { Confetti } from "./Confetti";
@@ -10,12 +10,9 @@ interface Props {
   reducedMotion: boolean;
 }
 
-/**
- * The final reveal. Spinning/locking closes the room, so the decision is final
- * here — no re-rolling or editing, just the pick and where to eat it.
- */
+/** Spinning or locking closes the room, so there is no re-rolling from here. */
 export function ResultView({ room, options, reducedMotion }: Props) {
-  const winner = options.find((o) => o._id === room.winnerOptionId);
+  const winner = options.find((option) => option._id === room.winnerOptionId);
 
   if (!winner) {
     return (
@@ -32,11 +29,16 @@ export function ResultView({ room, options, reducedMotion }: Props) {
     );
   }
 
-  const byVote = room.mode === "lock";
   const votes = room.decidedVotes ?? winner.voteCount;
-  const subline = byVote ? `🏆 The squad chose · ${votes} ${voteWord(votes)}` : "🎡 The wheel decided";
-  const query = (winner.suggestedSpot ? `${winner.suggestedSpot} ` : "") + winner.text;
-  const maps = mapsUrl(query);
+  const subline =
+    room.mode === "lock"
+      ? `🏆 The squad chose · ${votes} ${voteWord(votes)}`
+      : "🎡 The wheel decided";
+  // Include the suggested spot so the link lands on an actual restaurant rather
+  // than a search for "ramen".
+  const mapsLink = googleMapsSearchUrl(
+    (winner.suggestedSpot ? `${winner.suggestedSpot} ` : "") + winner.text,
+  );
 
   return (
     <div className="screen result">
@@ -50,14 +52,14 @@ export function ResultView({ room, options, reducedMotion }: Props) {
         <h1 className="result-name">{winner.text}</h1>
         <div className="result-sub">{subline}</div>
         {winner.suggestedSpot && (
-          <a className="result-try" href={maps} target="_blank" rel="noreferrer">
+          <a className="result-try" href={mapsLink} target="_blank" rel="noreferrer">
             Try: {winner.suggestedSpot} 📍
           </a>
         )}
       </div>
 
       <div className="result-actions">
-        <a className="btn btn--block btn--lg" href={maps} target="_blank" rel="noreferrer">
+        <a className="btn btn--block btn--lg" href={mapsLink} target="_blank" rel="noreferrer">
           Let's eat! 🎉
         </a>
         <Link to={`/h/${room.code}`} className="linklike">

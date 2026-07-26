@@ -1,4 +1,3 @@
-/** Full-screen spinner shown while a page's query is still loading. */
 export function LoadingScreen() {
   return (
     <div className="screen">

@@ -1,19 +1,18 @@
 import { useEffect, useState } from "react";
 
-/**
- * Tracks the OS "reduce motion" preference. This is a textbook *correct* use of
- * useEffect: subscribing to an external system (a media query) with cleanup.
- */
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
 export function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const [prefersReduced, setPrefersReduced] = useState(
+    () => window.matchMedia(REDUCED_MOTION_QUERY).matches,
+  );
 
   useEffect(() => {
-    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const onChange = () => setReduced(mq.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
+    const mediaQuery = window.matchMedia(REDUCED_MOTION_QUERY);
+    const onChange = () => setPrefersReduced(mediaQuery.matches);
+    mediaQuery.addEventListener("change", onChange);
+    return () => mediaQuery.removeEventListener("change", onChange);
   }, []);
 
-  return reduced;
+  return prefersReduced;
 }
-

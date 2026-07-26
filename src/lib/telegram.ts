@@ -1,60 +1,54 @@
+import { telegramFullName } from "../../convex/lib";
+
 /**
- * Telegram Mini App bridge.
+ * index.html loads telegram-web-app.js synchronously, so window.Telegram is
+ * already populated by the time this module evaluates — which is why these can
+ * be plain constants resolved once at load rather than hooks.
  *
- * When the app is opened inside Telegram (via the bot's "Open Munch" button,
- * a t.me/<bot>/<app>?startapp=<code> direct link), the synchronous
- * telegram-web-app.js script in index.html populates window.Telegram.WebApp
- * before this module evaluates — so these can be plain constants, resolved
- * once at load, exactly like CLIENT_ID.
- *
- * Trust model: the fields here (user, start_param) drive identity and
- * navigation on the CLIENT, no more trustworthy than the localStorage clientId
- * a browser dev session falls back to. Host actions (spin/lock/end) have teeth:
- * those send the raw signed `initData` string to the server, which verifies
- * Telegram's HMAC before acting.
+ * Only `signedInitData` has teeth. The unpacked fields below are no more
+ * trustworthy than a localStorage value, so they may drive navigation and
+ * greetings but nothing else; anything that matters sends the raw signed string
+ * to the server, which verifies Telegram's HMAC before acting.
  */
 
-import { tgFullName } from "../../convex/lib";
-
-export type TgWebAppUser = {
+export type TelegramUser = {
   id: number;
   first_name?: string;
   last_name?: string;
   username?: string;
 };
 
-type TgWebApp = {
+type TelegramWebApp = {
   initData: string;
-  initDataUnsafe: { user?: TgWebAppUser; start_param?: string };
+  initDataUnsafe: { user?: TelegramUser; start_param?: string };
   ready: () => void;
   expand: () => void;
 };
 
-const webApp: TgWebApp | null =
-  (window as { Telegram?: { WebApp?: TgWebApp } }).Telegram?.WebApp ?? null;
+const webApp: TelegramWebApp | null =
+  (window as { Telegram?: { WebApp?: TelegramWebApp } }).Telegram?.WebApp ?? null;
 
-/** True only for a real Telegram session (the script also loads a stub with
- *  empty initData in ordinary browsers). */
+/** True only inside a real Telegram session — the script also installs a stub
+ *  with empty initData in ordinary browsers. */
 export const isTelegram = Boolean(webApp && webApp.initData);
 
-export const tgUser: TgWebAppUser | null = isTelegram
+export const telegramUser: TelegramUser | null = isTelegram
   ? (webApp!.initDataUnsafe.user ?? null)
   : null;
 
-/** The bot puts the room code in ?startapp=… — Telegram hands it back here. */
-export const tgStartParam: string | null = isTelegram
+/** The bot puts the room code in ?startapp=… and Telegram hands it back here. */
+export const startParam: string | null = isTelegram
   ? (webApp!.initDataUnsafe.start_param ?? null)
   : null;
 
-/** The signed payload host actions send for server-side verification. */
-export const tgInitData: string = isTelegram ? webApp!.initData : "";
+export const signedInitData: string = isTelegram ? webApp!.initData : "";
 
-export function tgDisplayName(user: TgWebAppUser | null): string {
-  return user ? tgFullName(user) : "";
+export function telegramDisplayName(user: TelegramUser | null): string {
+  return user ? telegramFullName(user) : "";
 }
 
-/** Tell Telegram we've rendered (dismisses its loader) and use the full pane. */
-export function tgReady() {
+/** Dismisses Telegram's own loader, and takes the full pane. */
+export function markAppReady() {
   if (!webApp) return;
   webApp.ready();
   webApp.expand();

@@ -10,29 +10,35 @@ interface Props {
   items: WheelItem[];
   /** Final rotation in degrees, precomputed on the server so all phones match. */
   angle: number;
-  /** When false (reduced motion / late joiner), snap straight to the angle. */
+  /** When false — reduced motion, or a late joiner — snap straight to the angle. */
   animate: boolean;
   durationMs: number;
 }
 
-export function SpinWheel({ items, angle, animate, durationMs }: Props) {
-  const n = Math.max(items.length, 1);
-  const seg = 360 / n;
+/** How far out from the centre each emoji sits, as a fraction of the radius. */
+const EMOJI_RADIUS_RATIO = 0.62;
 
-  // Start at 0, then on the next frame jump to `angle` so the CSS transition
-  // actually plays. Driving an animation is a valid effect (with cleanup).
+export function SpinWheel({ items, angle, animate, durationMs }: Props) {
+  const wedgeCount = Math.max(items.length, 1);
+  const wedgeAngle = 360 / wedgeCount;
+
+  // Start at 0, then jump to `angle` on the next frame so the CSS transition
+  // has two values to animate between and actually plays.
   const [rotation, setRotation] = useState(animate ? 0 : angle);
   useEffect(() => {
     if (!animate) {
       setRotation(angle);
       return;
     }
-    const raf = requestAnimationFrame(() => setRotation(angle));
-    return () => cancelAnimationFrame(raf);
+    const frame = requestAnimationFrame(() => setRotation(angle));
+    return () => cancelAnimationFrame(frame);
   }, [animate, angle]);
 
-  const gradient = `conic-gradient(${items
-    .map((_, i) => `${WEDGE_COLORS[i % WEDGE_COLORS.length]} ${i * seg}deg ${(i + 1) * seg}deg`)
+  const wedgeGradient = `conic-gradient(${items
+    .map((_, index) => {
+      const color = WEDGE_COLORS[index % WEDGE_COLORS.length];
+      return `${color} ${index * wedgeAngle}deg ${(index + 1) * wedgeAngle}deg`;
+    })
     .join(", ")})`;
 
   return (
@@ -41,19 +47,19 @@ export function SpinWheel({ items, angle, animate, durationMs }: Props) {
       <div
         className="wheel"
         style={{
-          background: n === 1 ? WEDGE_COLORS[0] : gradient,
+          background: wedgeCount === 1 ? WEDGE_COLORS[0] : wedgeGradient,
           transform: `rotate(${rotation}deg)`,
           transition: animate ? `transform ${durationMs}ms var(--ease-spin)` : "none",
         }}>
-        {items.map((item, i) => {
-          const mid = i * seg + seg / 2;
+        {items.map((item, index) => {
+          // Rotate out to the wedge's centre, slide along the radius, then
+          // un-rotate so the emoji itself stays upright.
+          const wedgeCenter = index * wedgeAngle + wedgeAngle / 2;
+          const transform =
+            `translate(-50%, -50%) rotate(${wedgeCenter}deg) ` +
+            `translateY(calc(var(--r) * -${EMOJI_RADIUS_RATIO})) rotate(${-wedgeCenter}deg)`;
           return (
-            <span
-              key={item.id}
-              className="wheel-emoji"
-              style={{
-                transform: `translate(-50%, -50%) rotate(${mid}deg) translateY(calc(var(--r) * -0.62)) rotate(${-mid}deg)`,
-              }}>
+            <span key={item.id} className="wheel-emoji" style={{ transform }}>
               {item.emoji}
             </span>
           );

@@ -17,63 +17,68 @@ export default function Room() {
   const session = useRoomSession(code);
   const token = session.status === "ok" ? session.token : null;
 
-  const data = useQuery(api.rooms.getRoom, token ? { code, token } : "skip");
+  const roomData = useQuery(api.rooms.getRoom, token ? { code, token } : "skip");
   const presence = useQuery(api.presence.here, token ? { code, token } : "skip");
 
-  const heartbeat = useMutation(api.presence.heartbeat);
-  const leave = useMutation(api.presence.leave);
+  const sendHeartbeat = useMutation(api.presence.heartbeat);
+  const leaveRoom = useMutation(api.presence.leave);
 
   useEffect(() => {
     if (!code || !token) return;
     const siteUrl =
       import.meta.env.VITE_CONVEX_SITE_URL ||
       import.meta.env.VITE_CONVEX_URL.replace(".convex.cloud", ".convex.site");
+
     const beat = () => {
-      void heartbeat({ code, token }).catch(() => {});
+      void sendHeartbeat({ code, token }).catch(() => {});
     };
-    const leaveOnClose = () => {
+    // A closing webview can't reliably finish a mutation, so leaving is sent as
+    // a beacon instead — see the /leave route in convex/http.ts.
+    const announceLeaving = () => {
       if (siteUrl) {
         navigator.sendBeacon(`${siteUrl}/leave`, JSON.stringify({ code, token }));
       }
     };
 
     beat();
-    const id = setInterval(beat, HEARTBEAT_MS);
-    window.addEventListener("pagehide", leaveOnClose);
+    const intervalId = setInterval(beat, HEARTBEAT_MS);
+    window.addEventListener("pagehide", announceLeaving);
     return () => {
-      clearInterval(id);
-      window.removeEventListener("pagehide", leaveOnClose);
+      clearInterval(intervalId);
+      window.removeEventListener("pagehide", announceLeaving);
     };
-  }, [code, token, heartbeat]);
+  }, [code, token, sendHeartbeat]);
 
   useEffect(() => {
     if (!code || !token) return;
     return () => {
-      void leave({ code, token }).catch(() => {});
+      void leaveRoom({ code, token }).catch(() => {});
     };
-  }, [code, token, leave]);
+  }, [code, token, leaveRoom]);
 
-  // Anchor for bare Mini App opens (no startapp param): remember the room so
-  // TgEntry can land on this group's history instead of a dead end.
-  const found = data != null;
+  // The anchor for a Mini App opened with no room code — see rememberRoomCode.
+  const roomExists = roomData != null;
   useEffect(() => {
-    if (code && found) rememberRoomCode(code);
-  }, [code, found]);
+    if (code && roomExists) rememberRoomCode(code);
+  }, [code, roomExists]);
 
   if (session.status === "denied") return <NoticeScreen message={session.message} />;
   if (!token) return <LoadingScreen />;
+  if (roomData === undefined) return <LoadingScreen />;
+  if (roomData === null) return <NoticeScreen message="That round isn't here." />;
 
-  if (data === undefined) return <LoadingScreen />;
-  if (data === null) return <NoticeScreen message="That round isn't here." />;
+  const { room, options, viewerIsHost, myVoteIds } = roomData;
 
-  const { room, options, viewerIsHost, myVoteIds } = data;
-  const votedIds = new Set<string>(myVoteIds);
-
-  // A decided room is also "closed", but the spin animation + result reveal
-  // take precedence so everyone still sees the decision play out.
+  // A decided room is closed too, but the spin animation and result reveal take
+  // precedence so everyone still gets to watch the decision play out.
   if (room.phase === "deciding") {
     return (
-      <DecideView key={room.spinStartedAt ?? "decide"} room={room} options={options} viewerIsHost={viewerIsHost} />
+      <DecideView
+        key={room.spinStartedAt ?? "decide"}
+        room={room}
+        options={options}
+        viewerIsHost={viewerIsHost}
+      />
     );
   }
 
@@ -87,7 +92,7 @@ export default function Room() {
       options={options}
       viewerIsHost={viewerIsHost}
       presence={presence}
-      votedIds={votedIds}
+      votedIds={new Set<string>(myVoteIds)}
       name={VIEWER_NAME}
       token={token}
     />

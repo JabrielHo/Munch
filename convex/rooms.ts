@@ -4,33 +4,33 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { classify } from "./foods";
 import {
-  MAX_NAME,
-  MAX_TEXT,
-  byVotesDesc,
-  clean,
-  roomByCode,
+  MAX_NAME_LENGTH,
+  MAX_OPTION_LENGTH,
+  byMostVotesFirst,
+  findRoomByCode,
   requireRoom,
   sessionFromToken,
+  tidyText,
 } from "./lib";
 
 /**
- * Core room logic. Rooms are created by the Telegram bot (/munch — see
- * telegram.ts); this module holds the shared domain rules plus the public
- * queries/mutations the Mini App room UI talks to.
+ * Rooms are created by the bot (/munch — see telegram.ts); this file holds the
+ * rules and the queries and mutations the room screen calls.
  *
- * Host authority lives with the Telegram starter: UI-level checks compare the
- * viewer's clientId against "tg:<tgHostUserId>", and host ACTIONS (spin/lock/
- * end) are verified against Telegram's signed initData in telegram.ts.
+ * Authority belongs to whoever started the round. isRoundStarter enforces that
+ * directly for removeOption, but the `viewerIsHost` it feeds to the client is
+ * only a hint for what to draw: spin, lock and end are re-verified against
+ * Telegram's signed initData over in telegram.ts.
  */
 
-// —— Tunables ——
 const MAX_OPTIONS_PER_ROOM = 60;
-const MAX_OPTIONS_PER_CLIENT = 25;
-const WHEEL_MAX = 8; // wheel only renders the top N for legible wedges
-const SPIN_TURNS = 5; // full rotations before the wheel settles
+const MAX_OPTIONS_PER_PERSON = 25;
+const MAX_WHEEL_WEDGES = 8; // beyond this the wedges get too thin to read
+const SPIN_FULL_TURNS = 5; // whole rotations before the wheel settles
+const MAX_HISTORY_ROUNDS = 50;
+const CHAT_REFRESH_DEBOUNCE_MS = 2000;
 
-// Playful fallback names when the round isn't titled.
-const ROOM_NAMES = [
+const FALLBACK_ROOM_NAMES = [
   "Lunch Squad",
   "The Hungry Bunch",
   "Grub Club",
@@ -49,24 +49,17 @@ const ROOM_NAMES = [
   "Chow Down Crew",
 ];
 
-// —— Helpers (shared with telegram.ts) ——
-
 export function randomRoomName(): string {
-  return ROOM_NAMES[Math.floor(Math.random() * ROOM_NAMES.length)];
+  return FALLBACK_ROOM_NAMES[Math.floor(Math.random() * FALLBACK_ROOM_NAMES.length)];
 }
 
-/** The one host check: is this clientId the Telegram user who ran /munch? */
-export function isTgHost(room: Doc<"rooms">, clientId: string): boolean {
+function isRoundStarter(room: Doc<"rooms">, clientId: string): boolean {
   return clientId === `tg:${room.tgHostUserId}`;
 }
 
-const CHAT_REFRESH_DEBOUNCE_MS = 2000;
-
-/** Mini App activity should show up on the chat's scoreboard message — but a
- *  voting burst must not turn into an editMessageText per tap (Telegram rate
- *  limits chat edits). Each mutation calls this; the flag coalesces a burst
- *  into at most one re-render per debounce window. Serializable mutations make
- *  the check-then-set race-free. */
+/** A burst of votes must not turn into one message edit per tap, because
+ *  Telegram rate limits edits. The pending flag coalesces a burst into a single
+ *  re-render; serializable mutations make the check-then-set race-free. */
 async function scheduleChatRefresh(ctx: MutationCtx, room: Doc<"rooms">) {
   if (room.tgMessageId === undefined || room.tgRefreshPending) return;
   await ctx.db.patch(room._id, { tgRefreshPending: true });
@@ -75,13 +68,12 @@ async function scheduleChatRefresh(ctx: MutationCtx, room: Doc<"rooms">) {
   });
 }
 
-/** Write the canonical "deciding" patch — one source of truth for spin and
- *  lock, so they can't drift on which spin fields to set vs. clear. Deciding
- *  is final, so the room also closes here. */
-export async function decide(
+/** The one place a decision is written, so spinning and locking can never drift
+ *  on which spin fields to set versus clear. */
+export async function recordDecision(
   ctx: MutationCtx,
   room: Doc<"rooms">,
-  opts: {
+  decision: {
     mode: "spin" | "lock";
     winnerId: Id<"options">;
     votes: number;
@@ -92,41 +84,39 @@ export async function decide(
   const now = Date.now();
   await ctx.db.patch(room._id, {
     phase: "deciding",
-    mode: opts.mode,
-    winnerOptionId: opts.winnerId,
-    decidedVotes: opts.votes,
-    spinAngle: opts.spinAngle, // a value for spin, cleared for lock
-    wheelOptionIds: opts.wheelOptionIds,
+    mode: decision.mode,
+    winnerOptionId: decision.winnerId,
+    decidedVotes: decision.votes,
+    spinAngle: decision.spinAngle, // a value when spinning, cleared when locking
+    wheelOptionIds: decision.wheelOptionIds,
     spinStartedAt: now,
-    closedAt: now, // deciding is final — the room closes
+    closedAt: now, // deciding is final
   });
 }
 
-/** Pick a spin winner + the wheel geometry, server-side, so every phone's
- *  Mini App wheel animates to the exact same result. */
-export function computeSpin(options: Doc<"options">[]) {
-  const sorted = [...options].sort(byVotesDesc);
-  const wheel = sorted.slice(0, WHEEL_MAX);
-  const idx = Math.floor(Math.random() * wheel.length);
-  const winner = wheel[idx];
-  const seg = 360 / wheel.length;
-  const jitter = (Math.random() - 0.5) * seg * 0.5;
+/** Computed server-side so every phone's wheel animates to the same result. */
+export function computeSpinResult(options: Doc<"options">[]) {
+  const wheelOptions = [...options].sort(byMostVotesFirst).slice(0, MAX_WHEEL_WEDGES);
+  const winnerIndex = Math.floor(Math.random() * wheelOptions.length);
+  const wedgeAngle = 360 / wheelOptions.length;
+  const jitter = (Math.random() - 0.5) * wedgeAngle * 0.5;
   // Rotate so the winning wedge's centre lands under the fixed top pointer.
-  const spinAngle = SPIN_TURNS * 360 - (idx * seg + seg / 2) + jitter;
-  return { winner, spinAngle, wheelOptionIds: wheel.map((o) => o._id) };
+  const spinAngle = SPIN_FULL_TURNS * 360 - (winnerIndex * wedgeAngle + wedgeAngle / 2) + jitter;
+  return {
+    winner: wheelOptions[winnerIndex],
+    spinAngle,
+    wheelOptionIds: wheelOptions.map((option) => option._id),
+  };
 }
 
-/** Pick the top-voted option, breaking ties at random. */
-export function pickTop(options: Doc<"options">[]) {
-  const max = Math.max(...options.map((o) => o.voteCount));
-  const leaders = options.filter((o) => o.voteCount === max);
-  return leaders[Math.floor(Math.random() * leaders.length)];
+/** Ties are broken at random. */
+export function pickTopVoted(options: Doc<"options">[]) {
+  const topVoteCount = Math.max(...options.map((option) => option.voteCount));
+  const tiedLeaders = options.filter((option) => option.voteCount === topVoteCount);
+  return tiedLeaders[Math.floor(Math.random() * tiedLeaders.length)];
 }
 
-/** Validate + insert an option. The single write path for the Mini App's
- *  addOption mutation and the Telegram bot, so caps, dedup, and
- *  classification behave identically on both surfaces. */
-export async function insertOption(
+async function createOption(
   ctx: MutationCtx,
   room: Doc<"rooms">,
   args: { text: string; name: string; clientId: string },
@@ -135,42 +125,44 @@ export async function insertOption(
   if (room.phase !== "collecting") {
     throw new ConvexError("The decision's already happening — hang tight!");
   }
-  const who = clean(args.name, MAX_NAME);
-  if (!who) throw new ConvexError("Add your name first.");
-  const value = clean(args.text, MAX_TEXT);
-  if (!value) throw new ConvexError("Type a place or a craving to add.");
+  const addedByName = tidyText(args.name, MAX_NAME_LENGTH);
+  if (!addedByName) throw new ConvexError("Add your name first.");
+  const text = tidyText(args.text, MAX_OPTION_LENGTH);
+  if (!text) throw new ConvexError("Type a place or a craving to add.");
 
-  const all = await ctx.db
+  const existingOptions = await ctx.db
     .query("options")
     .withIndex("by_room", (q) => q.eq("roomId", room._id))
     .collect();
-  if (all.length >= MAX_OPTIONS_PER_ROOM) {
+  if (existingOptions.length >= MAX_OPTIONS_PER_ROOM) {
     throw new ConvexError("That's plenty of options already!");
   }
-  if (all.filter((o) => o.addedByClientId === args.clientId).length >= MAX_OPTIONS_PER_CLIENT) {
+  const mineSoFar = existingOptions.filter((o) => o.addedByClientId === args.clientId);
+  if (mineSoFar.length >= MAX_OPTIONS_PER_PERSON) {
     throw new ConvexError("You've added a bunch — let the others chip in!");
   }
-  const dup = all.find((o) => o.text.toLowerCase() === value.toLowerCase());
-  if (dup) throw new ConvexError(`"${dup.text}" is already on the list — vote for it!`);
+  const duplicate = existingOptions.find((o) => o.text.toLowerCase() === text.toLowerCase());
+  if (duplicate) {
+    throw new ConvexError(`"${duplicate.text}" is already on the list — vote for it!`);
+  }
 
-  const c = classify(value);
+  const classification = classify(text);
   const optionId = await ctx.db.insert("options", {
     roomId: room._id,
-    text: value,
-    kind: c.kind,
-    emoji: c.emoji,
-    ...(c.cuisine ? { cuisine: c.cuisine } : {}),
-    ...(c.suggestedSpot ? { suggestedSpot: c.suggestedSpot } : {}),
-    addedByName: who,
+    text,
+    kind: classification.kind,
+    emoji: classification.emoji,
+    ...(classification.cuisine ? { cuisine: classification.cuisine } : {}),
+    ...(classification.suggestedSpot ? { suggestedSpot: classification.suggestedSpot } : {}),
+    addedByName,
     addedByClientId: args.clientId,
     voteCount: 0,
     createdAt: Date.now(),
   });
-  return { optionId, text: value, emoji: c.emoji };
+  return { optionId };
 }
 
-/** Toggle a participant's vote. The single vote path for all surfaces. */
-export async function toggleVoteCore(
+async function toggleVoteOnOption(
   ctx: MutationCtx,
   optionId: Id<"options">,
   clientId: string,
@@ -184,45 +176,44 @@ export async function toggleVoteCore(
   if (room.phase !== "collecting") {
     throw new ConvexError("Voting's closed — it's decision time!");
   }
-  const who = clean(name, MAX_NAME);
-  if (!who) throw new ConvexError("Add your name first.");
+  const voterName = tidyText(name, MAX_NAME_LENGTH);
+  if (!voterName) throw new ConvexError("Add your name first.");
 
-  const existing = await ctx.db
+  const existingVote = await ctx.db
     .query("votes")
     .withIndex("by_option_client", (q) => q.eq("optionId", optionId).eq("voterClientId", clientId))
     .unique();
 
-  if (existing) {
-    await ctx.db.delete(existing._id);
+  if (existingVote) {
+    await ctx.db.delete(existingVote._id);
     await ctx.db.patch(optionId, { voteCount: Math.max(0, option.voteCount - 1) });
-    return { voted: false, option, room };
+    return { voted: false };
   }
   await ctx.db.insert("votes", {
     roomId: room._id,
     optionId,
     voterClientId: clientId,
-    voterName: who,
+    voterName,
     createdAt: Date.now(),
   });
   await ctx.db.patch(optionId, { voteCount: option.voteCount + 1 });
-  return { voted: true, option, room };
+  return { voted: true };
 }
 
 // ——————————————————————— Queries ———————————————————————
 
-/** Everything the room screen needs: room state, options sorted by votes, and
- *  the viewer's own votes (for the "you voted" fill) — one subscription. */
+/** Everything the room screen needs, on one subscription. */
 export const getRoom = query({
   args: { code: v.string(), token: v.string() },
   handler: async (ctx, { code, token }) => {
-    // The token proves group membership AND supplies identity — a non-member
-    // has none, so they see the same "not here" as a bad code.
+    // A non-member has no token, so they see the same "not here" as a bad code.
     const session = await sessionFromToken(ctx, token);
     if (!session) return null;
-    const room = await roomByCode(ctx, code);
+    const room = await findRoomByCode(ctx, code);
     if (!room || room.tgChatId !== session.tgChatId) return null;
     const clientId = session.clientId;
-    const [rows, myVotes] = await Promise.all([
+
+    const [allOptions, myVotes] = await Promise.all([
       ctx.db
         .query("options")
         .withIndex("by_room", (q) => q.eq("roomId", room._id))
@@ -232,83 +223,78 @@ export const getRoom = query({
         .withIndex("by_room_client", (q) => q.eq("roomId", room._id).eq("voterClientId", clientId))
         .collect(),
     ]);
-    rows.sort(byVotesDesc);
-
-    // Host = the Telegram starter, seen from the Mini App as "tg:<their id>".
-    // This flag only gates UI — host actions re-verify the signed initData.
-    const viewerIsHost = isTgHost(room, clientId);
+    allOptions.sort(byMostVotesFirst);
 
     // addedByClientId is the ONLY thing gating removeOption, so it must never
-    // ship to clients — exposing it would let any participant read another's id
-    // and delete their option. Resolve "is this mine?" here and drop the raw ids.
-    const options = rows.map(({ addedByClientId, ...rest }) => ({
-      ...rest,
+    // reach a client — that would let any participant read someone else's id
+    // and delete their option. Answer "is this mine?" here and drop the raw ids.
+    const options = allOptions.map(({ addedByClientId, ...option }) => ({
+      ...option,
       mine: addedByClientId === clientId,
     }));
-    // Strip the Telegram chat/user ids, plus hostName (the room view doesn't
-    // show it; History ships it from its own query).
     const { tgChatId, tgHostUserId, tgMessageId, tgRefreshPending, hostName, ...publicRoom } = room;
+
     return {
       room: publicRoom,
       options,
-      viewerIsHost,
+      // Only gates what the UI draws; host actions re-verify the signed initData.
+      viewerIsHost: isRoundStarter(room, clientId),
       myVoteIds: myVotes.map((vote) => vote.optionId),
     };
   },
 });
 
-const HISTORY_MAX = 50;
-
-/** Every round this room's group chat has run — live ones first-class, and
- *  outcomes for the decided ones. The room code is the capability: holding
- *  any one round's code (you got it from the chat) unlocks the chat's list.
- *  Returns null (not an error) for an unknown code, like getRoom — thrown
- *  query errors would land in React with no boundary to catch them.
+/** Every round this group chat has run, newest first. Holding any one round's
+ *  code unlocks the whole list — you only get a code from the chat itself.
  *
- *  Whether a round is closable is NOT computed here: it depends on wall-clock
- *  age, and a reactive query only re-runs on data changes — the flag would
- *  freeze. The client derives it at render time from createdAt + mine. */
+ *  Returns null rather than throwing for an unknown code, like getRoom, because
+ *  a thrown query error lands in React with no boundary to catch it.
+ *
+ *  Whether a round is still closable is deliberately NOT computed here: it
+ *  depends on wall-clock age, and a reactive query only re-runs when data
+ *  changes, so the flag would freeze. History derives it at render time. */
 export const groupHistory = query({
   args: { code: v.string(), token: v.string() },
   handler: async (ctx, { code, token }) => {
     const session = await sessionFromToken(ctx, token);
     if (!session) return null;
-    const anchor = await roomByCode(ctx, code);
-    if (!anchor || anchor.tgChatId !== session.tgChatId) return null;
+    const anchorRoom = await findRoomByCode(ctx, code);
+    if (!anchorRoom || anchorRoom.tgChatId !== session.tgChatId) return null;
     const clientId = session.clientId;
-    // Two index-bounded reads instead of collecting the chat's entire history
-    // (it grows forever). For closed rounds the index orders by closedAt —
-    // "recently closed" stands in for "recent", which the merge-sort below
-    // then refines by actual creation time.
-    const [open, closed] = await Promise.all([
+
+    // Two index-bounded reads, because a chat's history grows forever. The
+    // closed half comes back ordered by closedAt, so "recently closed" stands
+    // in for "recent" until the merge below re-sorts by creation time.
+    const [openRounds, closedRounds] = await Promise.all([
       ctx.db
         .query("rooms")
         .withIndex("by_tg_chat", (q) =>
-          q.eq("tgChatId", anchor.tgChatId).eq("closedAt", undefined),
+          q.eq("tgChatId", anchorRoom.tgChatId).eq("closedAt", undefined),
         )
         .order("desc")
-        .take(HISTORY_MAX),
+        .take(MAX_HISTORY_ROUNDS),
       ctx.db
         .query("rooms")
-        .withIndex("by_tg_chat", (q) => q.eq("tgChatId", anchor.tgChatId).gt("closedAt", 0))
+        .withIndex("by_tg_chat", (q) => q.eq("tgChatId", anchorRoom.tgChatId).gt("closedAt", 0))
         .order("desc")
-        .take(HISTORY_MAX),
+        .take(MAX_HISTORY_ROUNDS),
     ]);
-    const rooms = [...open, ...closed]
+    const rounds = [...openRounds, ...closedRounds]
       .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, HISTORY_MAX);
+      .slice(0, MAX_HISTORY_ROUNDS);
+
     return Promise.all(
-      rooms.map(async (r) => {
-        const winner = r.winnerOptionId ? await ctx.db.get(r.winnerOptionId) : null;
+      rounds.map(async (round) => {
+        const winner = round.winnerOptionId ? await ctx.db.get(round.winnerOptionId) : null;
         return {
-          code: r.code,
-          title: r.title,
-          hostName: r.hostName,
-          createdAt: r.createdAt,
-          closedAt: r.closedAt,
+          code: round.code,
+          title: round.title,
+          hostName: round.hostName,
+          createdAt: round.createdAt,
+          closedAt: round.closedAt,
           winner: winner ? { emoji: winner.emoji, text: winner.text } : null,
-          decidedVotes: r.decidedVotes,
-          mine: isTgHost(r, clientId),
+          decidedVotes: round.decidedVotes,
+          mine: isRoundStarter(round, clientId),
         };
       }),
     );
@@ -317,22 +303,19 @@ export const groupHistory = query({
 
 // ——————————————————————— Mutations ———————————————————————
 
-/** The member's identity for a write, resolved from their access token. Throws
- *  the same friendly error the client shows if the grant lapsed. */
 async function requireSession(ctx: MutationCtx, token: string) {
   const session = await sessionFromToken(ctx, token);
   if (!session) throw new ConvexError("Your session expired — reopen Munch from the chat.");
   return session;
 }
 
-/** Anyone in the room: add a place or a craving. Auto-classified by foods.ts. */
 export const addOption = mutation({
   args: { code: v.string(), text: v.string(), token: v.string() },
   handler: async (ctx, { code, text, token }) => {
     const session = await requireSession(ctx, token);
     const room = await requireRoom(ctx, code);
     if (room.tgChatId !== session.tgChatId) throw new ConvexError("Wrong group.");
-    const { optionId } = await insertOption(ctx, room, {
+    const { optionId } = await createOption(ctx, room, {
       text,
       name: session.name,
       clientId: session.clientId,
@@ -342,7 +325,6 @@ export const addOption = mutation({
   },
 });
 
-/** Remove an option (only the person who added it, or the host). */
 export const removeOption = mutation({
   args: { optionId: v.id("options"), token: v.string() },
   handler: async (ctx, { optionId, token }) => {
@@ -355,7 +337,7 @@ export const removeOption = mutation({
     if (room.phase !== "collecting") {
       throw new ConvexError("Can't change options mid-decision.");
     }
-    if (option.addedByClientId !== session.clientId && !isTgHost(room, session.clientId)) {
+    if (option.addedByClientId !== session.clientId && !isRoundStarter(room, session.clientId)) {
       throw new ConvexError("You can only remove options you added.");
     }
     const votes = await ctx.db
@@ -368,16 +350,15 @@ export const removeOption = mutation({
   },
 });
 
-/** Toggle this participant's vote on an option (one vote per person per option). */
 export const toggleVote = mutation({
   args: { optionId: v.id("options"), token: v.string() },
   handler: async (ctx, { optionId, token }) => {
     const session = await requireSession(ctx, token);
     const option = await ctx.db.get(optionId);
     if (!option) throw new ConvexError("That option's gone.");
-    const target = await ctx.db.get(option.roomId);
-    if (!target || target.tgChatId !== session.tgChatId) throw new ConvexError("Wrong group.");
-    const { voted, room } = await toggleVoteCore(ctx, optionId, session.clientId, session.name);
+    const room = await ctx.db.get(option.roomId);
+    if (!room || room.tgChatId !== session.tgChatId) throw new ConvexError("Wrong group.");
+    const { voted } = await toggleVoteOnOption(ctx, optionId, session.clientId, session.name);
     await scheduleChatRefresh(ctx, room);
     return { voted };
   },

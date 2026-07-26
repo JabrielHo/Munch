@@ -12,13 +12,13 @@ interface Props {
 }
 
 export function OptionRow({ option, voted, removable, onVote, onRemove }: Props) {
-  // Local, transient animation triggers — keyed remounts replay the CSS.
-  const [bump, setBump] = useState(0);
-  const [floatId, setFloatId] = useState<number | null>(null);
+  // Bumping these remounts the spans below, which replays their CSS animation.
+  const [tapCount, setTapCount] = useState(0);
+  const [floatingChipId, setFloatingChipId] = useState<number | null>(null);
 
   function handleVote() {
-    if (!voted) setFloatId(bump + 1); // floating chip only when adding a vote
-    setBump((b) => b + 1);
+    if (!voted) setFloatingChipId(tapCount + 1); // the chip only flies up on a new vote
+    setTapCount((count) => count + 1);
     onVote(option._id);
   }
 
@@ -55,15 +55,18 @@ export function OptionRow({ option, voted, removable, onVote, onRemove }: Props)
         onClick={handleVote}
         aria-pressed={voted}
         aria-label={`Vote for ${option.text}, ${option.voteCount} votes`}>
-        {/* Keys are prefixed so the count span and the float span can never
-            collide — they're remounted on each tap to replay their animation,
-            and `bump` + `floatId` can hold the same number. */}
-        <span key={`n-${bump}`} className="vote-count vote-count--bump">
+        {/* The two keys are prefixed so they can never collide: both counters
+            can hold the same number, and a collision would stop one of the
+            spans from remounting and replaying its animation. */}
+        <span key={`count-${tapCount}`} className="vote-count vote-count--bump">
           {option.voteCount}
         </span>
         <span className="vote-plus">{voted ? "voted" : "+1"}</span>
-        {floatId !== null && (
-          <span key={`f-${floatId}`} className="vote-float" onAnimationEnd={() => setFloatId(null)}>
+        {floatingChipId !== null && (
+          <span
+            key={`float-${floatingChipId}`}
+            className="vote-float"
+            onAnimationEnd={() => setFloatingChipId(null)}>
             🟡
           </span>
         )}

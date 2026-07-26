@@ -1,14 +1,9 @@
 /**
- * The self-contained "recommendation brain".
+ * Sorts whatever someone types into a specific PLACE ("Tian Tian Chicken Rice")
+ * or a generic CRAVING ("chicken rice"), and gives it a fitting emoji.
  *
- * When someone types an option we classify it as either a specific PLACE
- * ("Tian Tian Chicken Rice") or a generic FOOD / craving ("chicken rice").
- * Generic foods get a fitting emoji + cuisine tag, and — if you've curated
- * local spots below — a suggested place that shows up as a "try: …" chip and
- * on the result screen.
- *
- * There is no external API here (by design: no keys, no cost, works anywhere).
- * To make suggestions real for YOUR city, just fill in the `spots` arrays.
+ * There is no external API here by design — no keys, no cost, works anywhere.
+ * To make the suggestions real for your city, fill in the `spots` arrays below.
  */
 
 export type FoodKind = "place" | "food";
@@ -17,22 +12,21 @@ export interface Classification {
   kind: FoodKind;
   emoji: string;
   cuisine?: string;
-  /** A suggested specific spot for a generic craving (from the `spots` lists). */
   suggestedSpot?: string;
 }
 
 interface FoodEntry {
   emoji: string;
   cuisine: string;
-  /** Extra phrases that should map to this food. The map key counts too. */
+  /** Extra phrases that map to this food; the dictionary key counts too. */
   aliases?: string[];
   /** Your local go-to spots for this craving. Edit these for your city! */
   spots?: string[];
 }
 
 /**
- * Curated food dictionary. Keys are matched as whole phrases (case-insensitive).
- * Add your own — and drop real restaurants into `spots` to get "try: …" picks.
+ * Keys are matched as whole phrases, case-insensitively. Add your own — and
+ * drop real restaurants into `spots` to get "try: …" picks.
  */
 const FOODS: Record<string, FoodEntry> = {
   // —— Hawker / SE-Asian ——
@@ -93,20 +87,21 @@ const FOODS: Record<string, FoodEntry> = {
   bingsu: { emoji: "🍧", cuisine: "Korean dessert", spots: [] },
 };
 
-/** Build a fast lookup from every key + alias to its entry. Null-prototype on
- *  purpose: the lookup key is user-typed option text, and on a plain object
- *  "constructor" (and friends) would resolve through Object.prototype to a
- *  truthy non-entry. */
-const INDEX: Record<string, { key: string; entry: FoodEntry }> = (() => {
-  const idx: Record<string, { key: string; entry: FoodEntry }> = Object.create(null);
+function buildPhraseIndex(): Record<string, FoodEntry> {
+  // Null prototype on purpose: the lookup key is user-typed option text, and on
+  // a plain object "constructor" (and friends) would resolve through
+  // Object.prototype to a truthy non-entry.
+  const index: Record<string, FoodEntry> = Object.create(null);
   for (const [key, entry] of Object.entries(FOODS)) {
-    idx[key] = { key, entry };
-    for (const alias of entry.aliases ?? []) idx[alias] = { key, entry };
+    index[key] = entry;
+    for (const alias of entry.aliases ?? []) index[alias] = entry;
   }
-  return idx;
-})();
+  return index;
+}
 
-/** Words that strongly imply a named, specific establishment (→ PLACE). */
+const ENTRY_BY_PHRASE = buildPhraseIndex();
+
+/** Words that strongly imply a named, specific establishment. */
 const PLACE_SIGNALS = [
   "restaurant",
   "cafe",
@@ -135,7 +130,7 @@ const PLACE_SIGNALS = [
   "@",
 ];
 
-function normalize(text: string): string {
+function normalizeForMatching(text: string): string {
   return text
     .toLowerCase()
     .normalize("NFKD")
@@ -144,57 +139,54 @@ function normalize(text: string): string {
     .trim();
 }
 
-// Precompute the scan order (multi-word keys first) and their regexes ONCE —
-// scanForFood runs on every addOption and INDEX never changes.
-const KEY_PATTERNS = Object.keys(INDEX)
+// Built once, longest phrase first, because classify runs on every added option
+// and the dictionary never changes. Multi-word keys win over single words.
+const PHRASE_PATTERNS = Object.keys(ENTRY_BY_PHRASE)
   .sort((a, b) => b.length - a.length)
-  .map((key) => ({
-    key,
-    re: new RegExp(`(^|\\s)${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|\\s)`),
+  .map((phrase) => ({
+    phrase,
+    pattern: new RegExp(`(^|\\s)${phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|\\s)`),
   }));
 
-/** Find the first food whose key/alias appears as a whole word-run in the text. */
-function scanForFood(norm: string): { key: string; entry: FoodEntry; token: string } | null {
-  if (INDEX[norm]) return { ...INDEX[norm], token: norm };
-  // Try multi-word keys first (more specific), then single words.
-  for (const { key, re } of KEY_PATTERNS) {
-    if (re.test(norm)) return { ...INDEX[key], token: key };
+function findFoodPhrase(normalized: string): { entry: FoodEntry; matchedPhrase: string } | null {
+  const exact = ENTRY_BY_PHRASE[normalized];
+  if (exact) return { entry: exact, matchedPhrase: normalized };
+  for (const { phrase, pattern } of PHRASE_PATTERNS) {
+    if (pattern.test(normalized)) return { entry: ENTRY_BY_PHRASE[phrase], matchedPhrase: phrase };
   }
   return null;
 }
 
-/**
- * Classify a raw option string. Always returns an emoji so the row looks
- * intentional; only generic cravings get `kind: "food"` + a suggested spot.
- */
+/** Always returns an emoji, so every row looks intentional even when we have no
+ *  idea what the text is. */
 export function classify(text: string): Classification {
-  const norm = normalize(text);
-  const matched = scanForFood(norm);
+  const normalized = normalizeForMatching(text);
+  const match = findFoodPhrase(normalized);
 
-  // Hard place signals: an establishment word ("Cafe", "Bar") or a digit.
-  const hardPlace = PLACE_SIGNALS.some((s) => norm.includes(s)) || /\d/.test(norm);
-  // Two+ Capitalised words usually read as a brand — BUT mobile keyboards
-  // auto-capitalise everything, so a whole-phrase dictionary match (the entire
-  // input is a known craving, e.g. "Bubble Tea") must win over capitalisation.
-  const titleCased = (text.trim().match(/\b[A-Z][a-zA-Z'’]+/g) ?? []).length >= 2;
-  const wholePhraseMatch = matched !== null && matched.token === norm;
-  const proper = hardPlace || (titleCased && !wholePhraseMatch);
+  const hasPlaceSignal =
+    PLACE_SIGNALS.some((signal) => normalized.includes(signal)) || /\d/.test(normalized);
+  // Two or more Capitalised words usually read as a brand name — but mobile
+  // keyboards auto-capitalise everything, so an input that is entirely a known
+  // craving ("Bubble Tea") has to beat the capitalisation signal.
+  const looksLikeBrandName = (text.trim().match(/\b[A-Z][a-zA-Z'’]+/g) ?? []).length >= 2;
+  const matchedWholeInput = match !== null && match.matchedPhrase === normalized;
+  const isSpecificPlace = hasPlaceSignal || (looksLikeBrandName && !matchedWholeInput);
 
-  if (matched && !proper) {
-    const spot = matched.entry.spots?.[0];
+  if (match && !isSpecificPlace) {
+    const suggestedSpot = match.entry.spots?.[0];
     return {
       kind: "food",
-      emoji: matched.entry.emoji,
-      cuisine: matched.entry.cuisine,
-      ...(spot ? { suggestedSpot: spot } : {}),
+      emoji: match.entry.emoji,
+      cuisine: match.entry.cuisine,
+      ...(suggestedSpot ? { suggestedSpot } : {}),
     };
   }
 
-  // It's a specific place (or we can't tell) — still lend it a fitting emoji
-  // if the name hints at a cuisine (e.g. "Pizza Hut" → 🍕).
+  // A named place, or something we can't place at all — still lend it a fitting
+  // emoji when the name hints at a cuisine, e.g. "Pizza Hut" → 🍕.
   return {
     kind: "place",
-    emoji: matched?.entry.emoji ?? "🍴",
-    ...(matched?.entry.cuisine ? { cuisine: matched.entry.cuisine } : {}),
+    emoji: match?.entry.emoji ?? "🍴",
+    ...(match?.entry.cuisine ? { cuisine: match.entry.cuisine } : {}),
   };
 }

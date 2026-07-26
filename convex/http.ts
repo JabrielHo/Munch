@@ -6,11 +6,11 @@ import { deployEnv } from "./telegram";
 const http = httpRouter();
 
 /**
- * "I'm leaving" beacon. navigator.sendBeacon fires this when the Telegram Mini
- * App is closed or swiped away (the `pagehide` event) — where React's unmount
- * (and the normal leave mutation) can't reliably run — so the member drops out
- * of presence instantly instead of waiting out the heartbeat window.
- * Sent as text/plain so it's a CORS-simple request (no preflight needed).
+ * The "I'm leaving" beacon. navigator.sendBeacon fires this on `pagehide`, when
+ * the Mini App is closed or swiped away and React's unmount (so the normal
+ * leave mutation) can't reliably run — so the member drops out of presence
+ * immediately instead of waiting out the heartbeat window. Sent as text/plain
+ * to keep it a CORS-simple request with no preflight.
  */
 http.route({
   path: "/leave",
@@ -22,16 +22,16 @@ http.route({
         await ctx.runMutation(api.presence.leave, { code, token });
       }
     } catch {
-      // Ignore malformed beacons — this is best-effort cleanup.
+      // Best-effort cleanup: a malformed beacon is not worth reporting.
     }
     return new Response(null, { status: 204 });
   }),
 });
 
 /**
- * Telegram webhook. Authenticity: Telegram echoes back the secret we register
- * with setWebhook in this header — no valid secret, no processing. Always
- * answers 200 for authenticated updates (even on handler errors), because any
+ * The Telegram webhook. Telegram echoes the secret we registered with
+ * setWebhook in this header, which is what makes an update authentic. Answers
+ * 200 for every authenticated update, even when the handler failed, because any
  * other status makes Telegram re-deliver the same update in a retry loop.
  */
 http.route({

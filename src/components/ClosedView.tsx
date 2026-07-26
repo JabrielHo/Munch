@@ -3,13 +3,14 @@ import type { PublicRoom, PublicOption } from "../lib/types";
 import { tileColor } from "../lib/ui";
 import { voteWord } from "../../convex/lib";
 
-/**
- * A closed room — read-only for everyone. The options and the final pick stay
- * visible so the host (and friends) can look back at what was decided, but
- * nothing can change and there's no reopening.
- */
-export function ClosedView({ room, options }: { room: PublicRoom; options: PublicOption[] }) {
-  const winner = options.find((o) => o._id === room.winnerOptionId);
+interface Props {
+  room: PublicRoom;
+  options: PublicOption[];
+}
+
+/** A closed room, read-only for everyone, with no way to reopen it. */
+export function ClosedView({ room, options }: Props) {
+  const winner = options.find((option) => option._id === room.winnerOptionId);
 
   return (
     <div className="screen room">
@@ -31,7 +32,9 @@ export function ClosedView({ room, options }: { room: PublicRoom; options: Publi
             {winner.emoji}
           </div>
           <div className="chosen-main">
-            <div className="chosen-kicker">{room.mode === "lock" ? "🏆 The squad chose" : "🎡 The wheel chose"}</div>
+            <div className="chosen-kicker">
+              {room.mode === "lock" ? "🏆 The squad chose" : "🎡 The wheel chose"}
+            </div>
             <div className="chosen-name">{winner.text}</div>
           </div>
         </div>
@@ -41,25 +44,28 @@ export function ClosedView({ room, options }: { room: PublicRoom; options: Publi
         <div className="empty">No options were added.</div>
       ) : (
         <div className="options">
-          {options.map((o) => (
-            <div
-              key={o._id}
-              className={`option-row option-row--readonly${o._id === room.winnerOptionId ? " option-row--won" : ""}`}>
-              <div className="option-emoji" style={{ background: tileColor(o._id) }}>
-                {o.emoji}
-              </div>
-              <div className="option-main">
-                <div className="option-name">{o.text}</div>
-                <div className="option-meta">
-                  <span>by {o.addedByName}</span>
+          {options.map((option) => {
+            const won = option._id === room.winnerOptionId;
+            return (
+              <div
+                key={option._id}
+                className={`option-row option-row--readonly${won ? " option-row--won" : ""}`}>
+                <div className="option-emoji" style={{ background: tileColor(option._id) }}>
+                  {option.emoji}
+                </div>
+                <div className="option-main">
+                  <div className="option-name">{option.text}</div>
+                  <div className="option-meta">
+                    <span>by {option.addedByName}</span>
+                  </div>
+                </div>
+                <div className="vote-static">
+                  {option.voteCount}
+                  <span>{voteWord(option.voteCount)}</span>
                 </div>
               </div>
-              <div className="vote-static">
-                {o.voteCount}
-                <span>{voteWord(o.voteCount)}</span>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

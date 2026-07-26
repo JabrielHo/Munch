@@ -20,8 +20,10 @@ vote**. The winner lands right back in the chat.
 | Mini App | **React + Vite + TypeScript** (no UI framework, hand-rolled CSS) |
 | Hosting | **Cloudflare Pages** (Mini App static bundle) + Convex (backend) |
 
-There is no auth stack: the bot verifies Telegram's webhook secret, and Mini
-App host actions are verified against Telegram's signed `initData` (HMAC).
+There is no auth stack. The bot verifies Telegram's webhook secret; the Mini App
+proves who you are with Telegram's signed `initData` (HMAC), then trades it for
+a short-lived token proving you're currently in the group — which every read and
+write has to present.
 
 ---
 
@@ -96,9 +98,11 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook" \
 
 The session message's **🎡 Open Munch** button opens the full Munch room —
 live options, votes, and the synced spin wheel — as a Telegram Mini App layered
-over the chat. Identity comes from Telegram (the same `tg:<user id>` the chat
-buttons use), so there's no name gate, and host actions are verified
-server-side against Telegram's signed `initData`.
+over the chat. Identity is `tg:<user id>`, derived server-side from Telegram's
+signed `initData`, so there's no name gate and nothing to spoof. Before a room
+renders, the app trades that identity for a short-lived access token that is
+only granted to a **current member of the group** — every read, write, and host
+action presents it, so a forwarded link gets nowhere.
 
 > ⚠️ The Mini App is a hosted web page — Cloudflare Pages (or any static host)
 > must keep serving the app for it to work.
@@ -119,9 +123,25 @@ the app as `start_param`, and the `/tg` route forwards into the room.
 
 **Mini App dev loop:** `npm run dev` serves the app at localhost, but Telegram
 needs a public HTTPS URL — deploy to Pages (or tunnel) to test inside Telegram.
-For quick browser-based dev without Telegram, open a room URL directly and seed
-`localStorage`: `munch.clientId` (`tg:<user id>` to act as that member) and
-`munch.name` — the app has no other web entrance; Telegram is the front door.
+
+For quick browser-based dev without Telegram, mint yourself an access token by
+hand. Outside Telegram there's no signed `initData` to verify, so the app skips
+`enterRoom` and reads a token straight from `localStorage`. Grab a room `code`
+from the Open Munch button's `?startapp=` (or the `rooms` table in the Convex
+dashboard), then:
+
+```bash
+npx convex run telegram:devGrantSession '{"code":"<room code>","tgUserId":123456,"name":"Dev"}'
+```
+
+That prints a token. Put it in `localStorage` as `munch.token` and open
+`/r/<room code>`; you'll act as `tg:123456`, and the same token works for that
+whole group's rounds. Optionally set `munch.name` too — it only feeds local
+greetings, since the server takes your real name from the grant.
+
+The grant skips the group-membership check that `enterRoom` enforces, so it's
+strictly a dev convenience. Telegram is the front door; there is no other web
+entrance.
 
 ### Make the food suggestions real for your city
 
@@ -177,18 +197,20 @@ button opens the Mini App over the chat.
 
 ```
 convex/            Backend: schema, room logic, Telegram bot, food classifier
-  schema.ts        Tables: rooms, options, votes, presence
-  rooms.ts         Shared room rules + the queries/mutations the room UI uses
-  telegram.ts      Bot webhook: /munch sessions, live scoreboard message,
-                   Mini App initData verification + host actions
+  schema.ts        Tables: rooms, options, votes, presence, roomSessions
+  lib.ts           Shared helpers + the access-token trust anchor
+  rooms.ts         Room rules + the queries/mutations the room UI uses
+  telegram.ts      Bot webhook: /munch rounds, live scoreboard message,
+                   initData verification, host actions, access grants
   foods.ts         Place-vs-craving classifier + your curated spots
   presence.ts      "who's here" heartbeat (room screen)
   http.ts          /telegram webhook route + presence leave beacon
 src/
   pages/           Landing, Room, History, TgEntry (Mini App entry)
   components/      CollectView, OptionRow, SpinWheel, DecideView, ResultView,
-                   ClosedView, Confetti, LoadingScreen
-  lib/             telegram (Mini App bridge), identity, hooks, ui
+                   ClosedView, Confetti, LoadingScreen, NoticeScreen
+  lib/             session (the access gate), telegram (Mini App bridge),
+                   identity, types, hooks, ui
 ```
 
 ### Scripts

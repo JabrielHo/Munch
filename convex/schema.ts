@@ -2,40 +2,35 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 /**
- * Identity model:
- *  - Rooms are born in a Telegram group chat (/munch). The HOST is the
- *    Telegram user who started the round (tgHostUserId) — no accounts anywhere.
- *  - PARTICIPANTS are Telegram users, identified as clientId
- *    "tg:<telegram user id>" — the chat's vote buttons and the Mini App
- *    resolve to the same id, so one person is one voter on both surfaces.
- *  - Browser sessions without Telegram (dev/testing) fall back to a
- *    per-browser random clientId; there is no standalone web flow.
+ * Rooms are born in a Telegram group chat (/munch). Whoever ran the command
+ * starts the round; everyone else is just a Telegram user, identified as
+ * clientId "tg:<telegram user id>". There are no accounts anywhere. Browser
+ * sessions without Telegram (dev only) fall back to a random per-browser id.
  */
 export default defineSchema({
   rooms: defineTable({
-    code: v.string(), // random UUID in the Mini App startapp link — unguessable
+    code: v.string(), // random UUID; rides in the Mini App's startapp link
     title: v.string(),
-    hostName: v.string(), // snapshot of the starter's Telegram name
-    tgChatId: v.number(), // the group chat the session lives in
-    tgHostUserId: v.number(), // Telegram user who ran /munch
-    tgMessageId: v.optional(v.number()), // the bot's live session message (edited in place)
-    tgRefreshPending: v.optional(v.boolean()), // a scoreboard re-render is scheduled (debounce)
-    // "collecting" = people adding/voting; "deciding" = the synced reveal.
+    hostName: v.string(), // the starter's Telegram name, snapshotted at /munch
+    tgChatId: v.number(),
+    tgHostUserId: v.number(), // the Telegram user who ran /munch
+    tgMessageId: v.optional(v.number()), // the bot's scoreboard message, edited in place
+    tgRefreshPending: v.optional(v.boolean()), // a scoreboard re-render is already scheduled
+    // "collecting" = people adding and voting; "deciding" = the synced reveal.
     phase: v.union(v.literal("collecting"), v.literal("deciding")),
-    // How the current decision is being made (set when entering "deciding").
     mode: v.optional(v.union(v.literal("spin"), v.literal("lock"))),
     winnerOptionId: v.optional(v.id("options")),
-    decidedVotes: v.optional(v.number()), // winner's vote count at decision time
-    // Spin animation state — server-precomputed so every phone lands identically.
+    decidedVotes: v.optional(v.number()), // the winner's vote count at decision time
+    // Spin animation, precomputed server-side so every phone lands identically.
     spinAngle: v.optional(v.number()), // final rotation in degrees
-    spinStartedAt: v.optional(v.number()), // ms epoch; clients sync from this
+    spinStartedAt: v.optional(v.number()), // ms epoch; clients sync their animation to it
     wheelOptionIds: v.optional(v.array(v.id("options"))), // frozen wheel order
-    closedAt: v.optional(v.number()), // closed by the host; read-only when set
+    closedAt: v.optional(v.number()), // set = read-only, forever
     createdAt: v.number(),
   })
     .index("by_code", ["code"])
-    // closedAt second, so "the open room in this chat" is an index range —
-    // chats accumulate closed rounds forever and lookups must not scan them.
+    // closedAt comes second so "the open rooms in this chat" is an index range.
+    // A chat accumulates closed rounds forever and lookups must not scan them.
     .index("by_tg_chat", ["tgChatId", "closedAt"]),
 
   options: defineTable({
@@ -45,9 +40,9 @@ export default defineSchema({
     emoji: v.string(),
     cuisine: v.optional(v.string()),
     suggestedSpot: v.optional(v.string()),
-    addedByName: v.string(), // snapshot at add time
+    addedByName: v.string(), // snapshotted at add time
     addedByClientId: v.string(),
-    voteCount: v.number(), // denormalized for cheap sorting/rendering
+    voteCount: v.number(), // denormalized so sorting and rendering stay cheap
     createdAt: v.number(),
   }).index("by_room", ["roomId"]),
 
@@ -71,20 +66,20 @@ export default defineSchema({
     .index("by_room", ["roomId"])
     .index("by_room_client", ["roomId", "clientId"]),
 
-  // Access grants: proof that a Telegram user is a current member of a group.
-  // Minted by enterRoom (telegram.ts) after a getChatMember check, then
-  // presented as `token` by every read/write so the client can't spoof
-  // identity or reach a chat it doesn't belong to. Short-lived + re-checked.
+  // Proof that a Telegram user is a current member of a group. Minted by
+  // enterRoom (telegram.ts) after a getChatMember check, then presented as
+  // `token` on every read and write so a client can neither spoof an identity
+  // nor reach a chat it doesn't belong to.
   roomSessions: defineTable({
-    token: v.string(), // random capability the client holds
+    token: v.string(), // the random capability the client holds
     tgChatId: v.number(), // the group this grant is scoped to
     tgUserId: v.number(), // the verified member
     name: v.string(), // their Telegram name, snapshotted (never client-supplied)
-    checkedAt: v.number(), // last successful getChatMember (drives re-check cadence)
-    expiresAt: v.number(), // grant lifetime; queries/mutations reject once past
-    // Minted by devGrantSession for browser testing — never membership-checked,
-    // so it is exempt from the checkedAt staleness bound (see lib.ts). Only an
-    // internal mutation can set it; no client path reaches it.
+    checkedAt: v.number(), // last successful getChatMember; drives re-check cadence
+    expiresAt: v.number(),
+    // Set by devGrantSession for browser testing. Such a grant was never
+    // membership-checked, so it is exempt from the checkedAt staleness bound
+    // (see lib.ts). Only an internal mutation can set it.
     dev: v.optional(v.boolean()),
   })
     .index("by_token", ["token"])

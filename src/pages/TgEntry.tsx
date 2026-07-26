@@ -1,28 +1,28 @@
 import { useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { isTelegram, tgStartParam, tgReady } from "../lib/telegram";
+import { isTelegram, startParam, markAppReady } from "../lib/telegram";
 import { lastRoomCode } from "../lib/identity";
 import { LoadingScreen } from "../components/LoadingScreen";
 
 /**
  * The Mini App entry point — the URL registered with BotFather. Telegram opens
- * it with the room code riding in ?startapp=… (surfaced as start_param), so
- * this screen just dismisses Telegram's loader and forwards into the room.
+ * it with the room code riding in ?startapp=…, so this screen exists only to
+ * forward into the room.
  */
 export default function TgEntry() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    tgReady();
+    markAppReady();
     if (!isTelegram) return;
-    if (tgStartParam) {
-      navigate(`/r/${tgStartParam}`, { replace: true });
+    if (startParam) {
+      navigate(`/r/${startParam}`, { replace: true });
       return;
     }
-    // Bare open (bot profile / direct link without startapp): land on the
-    // history of the group this device last munched with.
-    const last = lastRoomCode();
-    if (last) navigate(`/h/${last}`, { replace: true });
+    // Opened without a room code (from the bot profile or a direct link): land
+    // on the history of whichever group this device last munched with.
+    const previousRoom = lastRoomCode();
+    if (previousRoom) navigate(`/h/${previousRoom}`, { replace: true });
   }, [navigate]);
 
   if (!isTelegram) {
@@ -39,9 +39,9 @@ export default function TgEntry() {
     );
   }
 
-  // The effect above handles both navigations; this message is only for a
-  // truly bare open on a device that has never had a room to remember.
-  if (!tgStartParam && !lastRoomCode()) {
+  // The effect above handles both navigations, so this only shows on a device
+  // that has never had a room to remember.
+  if (!startParam && !lastRoomCode()) {
     return (
       <div className="screen home">
         <div className="home-top">
