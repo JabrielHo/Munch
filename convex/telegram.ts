@@ -40,9 +40,9 @@ import { formatDate, formatDay, formatTime, TZ_LABEL } from "./time";
  * secret and hands the raw update to handleUpdate at the bottom of this file.
  *
  * A new message is the only thing here that makes a phone buzz, so they are
- * rationed: a hangout is worth two of them across its whole life, the card and
- * the reminder on the day, plus one more if it is called off after people have
- * replied. Everything else — RSVPs landing, details changing, a place being
+ * rationed: a hangout is worth two of them across its whole life, the card that
+ * /hangout posts and the reminder on the day, plus one more if it is called off
+ * after people have replied. Everything else — RSVPs landing, details changing, a place being
  * decided — is an edit to the card that already exists. Before adding a
  * sendMessage anywhere, check whether an edit would carry the same news.
  */
@@ -767,17 +767,6 @@ function renderHangoutCard(state: HangoutState): {
     };
   }
 
-  if (hangout.status === "draft") {
-    return {
-      text:
-        `🗓 <b>${escapeHtml(hangout.title)}</b>\n` +
-        `<i>${escapeHtml(hangout.hostName)} is setting this up…</i>`,
-      ...(openUrl
-        ? { reply_markup: { inline_keyboard: [[{ text: "⚙️ Set it up", url: openUrl }]] } }
-        : {}),
-    };
-  }
-
   const guestLines = [
     namesLine("✅", "Coming", rsvps.in),
     namesLine("🤔", "Maybe", rsvps.maybe),
@@ -879,7 +868,7 @@ export const refreshHangoutCard = internalAction({
 });
 
 /**
- * The day-of nudge, booked by hangouts.ts when the plan is published or moved.
+ * The day-of nudge, booked by hangouts.ts when the plan is created or moved.
  * A brand-new message rather than an edit, because only a new message pings
  * everyone's phone — which is the entire point of a reminder.
  */
@@ -923,32 +912,6 @@ export const sendHangoutReminder = internalAction({
   },
 });
 
-/**
- * Publishing from the Mini App. A draft the host filled in there and then turns
- * into the live card in place: the group saw /hangout land seconds ago and the
- * card is still on screen, so posting a second one would buzz every phone to
- * say something they are already looking at. Only a draft left to go stale, or
- * an open hangout the host is deliberately bumping, gets a fresh message.
- *
- * The token proves both identity and membership; the signed initData is a
- * second, independent check on the same claim.
- */
-export const publishHangout = action({
-  args: { initData: v.string(), code: v.string(), token: v.string() },
-  handler: async (ctx, { initData, code, token }) => {
-    await verifyInitData(initData);
-    const { hangoutId, previousMessageId, bumpCard } = await ctx.runMutation(
-      internal.hangouts.markPublished,
-      { code, token },
-    );
-    if (!bumpCard && previousMessageId !== undefined) {
-      await editHangoutCard(ctx, hangoutId);
-      return;
-    }
-    await postHangoutCard(ctx, hangoutId, previousMessageId);
-  },
-});
-
 export const cancelHangout = action({
   args: { initData: v.string(), code: v.string(), token: v.string() },
   handler: async (ctx, { initData, code, token }) => {
@@ -958,8 +921,7 @@ export const cancelHangout = action({
       token,
     });
     await editHangoutCard(ctx, hangoutId);
-    // A draft was never anyone else's business, so only a published hangout
-    // being called off is worth a notification.
+    // Nobody replied, nobody needs telling — the card already says it is off.
     if (announce) {
       const state = await ctx.runQuery(internal.hangouts.cardState, { hangoutId });
       if (state) {
@@ -974,7 +936,7 @@ export const cancelHangout = action({
 });
 
 async function startHangout(ctx: ActionCtx, chat: TgChat, from: TgUser, title: string) {
-  const { hangoutId } = await ctx.runMutation(internal.hangouts.createDraft, {
+  const { hangoutId } = await ctx.runMutation(internal.hangouts.createHangout, {
     chatId: chat.id,
     hostTgUserId: from.id,
     hostName: displayName(from),

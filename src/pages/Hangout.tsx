@@ -42,8 +42,11 @@ export default function Hangout() {
   if (data === null) return <NoticeScreen message="That hangout isn't here." />;
 
   const { hangout, rsvps, myAnswer, viewerIsHost } = data;
-  const isDraft = hangout.status === "draft";
   const isCancelled = hangout.status === "cancelled";
+  // Straight out of /hangout a hangout has a name and nothing else, so its host
+  // lands in the form rather than on a card they would have to tap Edit to
+  // fill in. Everyone else sees the card, TBC and all, and can already reply.
+  const needsDetails = viewerIsHost && !isCancelled && hangout.startsAt === undefined;
 
   function answer(next: RsvpAnswer) {
     if (!token) return;
@@ -60,20 +63,17 @@ export default function Hangout() {
     cancelHangout({ initData: signedInitData, code, token }).catch(alertError);
   }
 
-  if (isDraft && !viewerIsHost) {
-    return <NoticeScreen message={`${hangout.hostName} is still setting this one up.`} />;
-  }
-
-  if (viewerIsHost && (isDraft || editing)) {
+  if (needsDetails || (viewerIsHost && editing)) {
     return (
       <Screen
-        title={isDraft ? "New hangout" : "Edit hangout"}
-        subtitle={isDraft ? "Nobody sees this until you post it" : hangout.title}
-        backTo={isDraft ? "/g/" + code : undefined}>
+        title={needsDetails ? "Set it up" : "Edit hangout"}
+        subtitle={hangout.title}
+        backTo={`/g/${code}`}>
         <HangoutForm
           hangout={hangout}
           token={token}
           onSaved={() => setEditing(false)}
+          {...(editing ? { onCancel: () => setEditing(false) } : {})}
         />
       </Screen>
     );

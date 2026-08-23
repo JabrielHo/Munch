@@ -15,7 +15,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** The chat is reminded at this hour, local time, on the day itself. */
 export const REMINDER_HOUR = 9;
-/** How close to the start a late-published hangout still earns a reminder. */
+/** How close to the start a hangout set up late still earns a reminder. */
 export const LATE_REMINDER_LEAD_MS = 60 * 60 * 1000;
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -114,10 +114,10 @@ export function formatWhen(epochMs: number, nowMs: number = Date.now()): string 
 }
 
 /**
- * When to nudge the chat: the morning of the hangout. A hangout published after
- * that moment has already missed it, so it falls back to an hour before the
- * start; one published inside that hour gets no reminder, since the message
- * would land on top of the thing it was reminding about.
+ * When to nudge the chat: the morning of the hangout. A hangout whose day is
+ * set after that moment has already missed it, so it falls back to an hour
+ * before the start; one set inside that hour gets no reminder, since the
+ * message would land on top of the thing it was reminding about.
  */
 export function reminderTimeFor(startsAt: number, nowMs: number): number | null {
   const morningOf = startOfLocalDay(startsAt) + REMINDER_HOUR * 60 * 60 * 1000;

@@ -162,7 +162,6 @@ function PlanRow({ card, past }: { card: FeedCard; past?: boolean }) {
         <span className="min-w-0 flex-1 space-y-1">
           <span className="flex items-center gap-2">
             <span className="truncate font-semibold">{card.title}</span>
-            {card.status === "draft" && <Badge variant="muted">draft</Badge>}
             {card.status === "cancelled" && <Badge variant="cant">off</Badge>}
           </span>
           <span className="flex items-center gap-1.5 text-sm text-muted-foreground">

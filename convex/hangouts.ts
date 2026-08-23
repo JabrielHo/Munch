@@ -20,9 +20,10 @@ import { epochToWhen, isValidWhen, reminderTimeFor, whenToEpoch, type LocalWhen 
 
 /**
  * A hangout is the plan: a title, when it starts, where it is, and who said
- * they're coming. /hangout creates it as a draft (telegram.ts); the host fills
- * in the details in the Mini App and publishes, which turns the bot's message
- * into a live RSVP card and books the day-of reminder.
+ * they're coming. /hangout (telegram.ts) posts the card immediately and the
+ * host fills in the details afterwards; every save edits that same card and
+ * re-books the day-of reminder. There is no draft state and no publish step —
+ * the plan is real as soon as someone asks for it.
  *
  * "Where" has two answers. Either the host types a place, or the group decides
  * it the old Munch way — a round of adding, voting and spinning, whose winner
@@ -30,14 +31,6 @@ import { epochToWhen, isValidWhen, reminderTimeFor, whenToEpoch, type LocalWhen 
  */
 
 const CARD_REFRESH_DEBOUNCE_MS = 2000;
-/**
- * How long a draft can sit before publishing it posts a fresh card instead of
- * editing the one already there. Inside this window the group watched /hangout
- * land moments ago and the card is still in view, so a second message would be
- * pure noise; past it the draft has scrolled away and the plan deserves to be
- * seen.
- */
-const FRESH_DRAFT_MS = 5 * 60 * 1000;
 const MAX_FEED_HANGOUTS = 40;
 /** How long a hangout that has already started keeps showing up as upcoming. */
 const RECENTLY_STARTED_MS = 6 * 60 * 60 * 1000;
@@ -184,8 +177,8 @@ async function writeRsvp(
 
 // —————————————————————— Internal: the bot's side ——————————————————————
 
-/** /hangout — a draft nobody can RSVP to until the host publishes it. */
-export const createDraft = internalMutation({
+/** /hangout — live from the start, with the details filled in afterwards. */
+export const createHangout = internalMutation({
   args: {
     chatId: v.number(),
     hostTgUserId: v.number(),
@@ -200,7 +193,7 @@ export const createDraft = internalMutation({
       hostName: tidyText(args.hostName, MAX_NAME_LENGTH) || "Host",
       tgChatId: args.chatId,
       tgHostUserId: args.hostTgUserId,
-      status: "draft",
+      status: "open",
       createdAt: Date.now(),
     });
     return { hangoutId, code };
@@ -275,7 +268,12 @@ export const openChatHangouts = internalQuery({
       .take(MAX_FEED_HANGOUTS);
     const cutoff = Date.now() - RECENTLY_STARTED_MS;
     return rows
-      .filter((row) => row.status === "open" && (row.startsAt ?? 0) > cutoff)
+      // A hangout with no day yet is still coming up, and listing it is a nudge
+      // to finish setting it up.
+      .filter(
+        (row) =>
+          row.status === "open" && (row.startsAt === undefined || row.startsAt > cutoff),
+      )
       .sort((a, b) => (a.startsAt ?? a.createdAt) - (b.startsAt ?? b.createdAt))
       .map((row) => ({ code: row.code, title: row.title, startsAt: row.startsAt, place: row.place }));
   },
@@ -359,24 +357,20 @@ export const groupFeed = query({
           goingCount: rsvps.filter((rsvp) => rsvp.answer === "in").length,
           deciding: Boolean(room && !room.winnerOptionId && !room.closedAt),
           mine: row.tgHostUserId === session.tgUserId,
-          // A draft belongs to its host alone, so a half-written plan never
-          // shows up in everyone else's list.
-          hidden: row.status === "draft" && row.tgHostUserId !== session.tgUserId,
         };
       }),
     );
 
     type Card = (typeof cards)[number];
-    const visible = cards.filter((card) => !card.hidden);
     const isUpcoming = (card: Card) =>
       card.status !== "cancelled" &&
       (card.startsAt === undefined || card.startsAt > now - RECENTLY_STARTED_MS);
 
     return {
-      upcoming: visible
+      upcoming: cards
         .filter(isUpcoming)
         .sort((a, b) => (a.startsAt ?? a.createdAt) - (b.startsAt ?? b.createdAt)),
-      past: visible.filter((card) => !isUpcoming(card)),
+      past: cards.filter((card) => !isUpcoming(card)),
     };
   },
 });
@@ -459,29 +453,6 @@ export const saveDetails = mutation({
   },
 });
 
-/** Publishing is the moment the plan becomes everyone's. */
-export const markPublished = internalMutation({
-  args: { code: v.string(), token: v.string() },
-  handler: async (ctx, { code, token }) => {
-    const { hangout } = await requireHost(ctx, code, token);
-    if (hangout.startsAt === undefined) throw new ConvexError("Set a day and a time first.");
-    const wasDraft = hangout.status === "draft";
-    if (wasDraft) {
-      await ctx.db.patch(hangout._id, { status: "open" });
-    }
-    const published = (await ctx.db.get(hangout._id))!;
-    await rescheduleReminder(ctx, published);
-    return {
-      hangoutId: hangout._id,
-      previousMessageId: hangout.tgMessageId,
-      // A draft filled in there and then just becomes the live card where it
-      // stands. A stale draft has scrolled away, and re-publishing an open
-      // hangout is the host deliberately bumping it, so both post afresh.
-      bumpCard: !wasDraft || Date.now() - hangout.createdAt > FRESH_DRAFT_MS,
-    };
-  },
-});
-
 export const markCancelled = internalMutation({
   args: { code: v.string(), token: v.string() },
   handler: async (ctx, { code, token }) => {
@@ -496,9 +467,6 @@ export const markCancelled = internalMutation({
     // Calling off a plan nobody ever answered is not worth interrupting the
     // group over — the card says it, and that is enough.
     const replies = await rsvpsFor(ctx, hangout._id);
-    return {
-      hangoutId: hangout._id,
-      announce: hangout.status === "open" && replies.length > 0,
-    };
+    return { hangoutId: hangout._id, announce: replies.length > 0 };
   },
 });

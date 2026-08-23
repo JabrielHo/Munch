@@ -1,11 +1,10 @@
 import { useState } from "react";
-import { useAction, useMutation } from "convex/react";
-import { MapPin, Send, Sparkles } from "lucide-react";
+import { useMutation } from "convex/react";
+import { Check, MapPin, Sparkles } from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import { MAX_TITLE_LENGTH } from "../../convex/lib";
 import { epochToWhen, type LocalWhen } from "../../convex/time";
 import { MAX_PLACE_LENGTH } from "@/lib/identity";
-import { signedInitData } from "@/lib/telegram";
 import { alertError } from "@/lib/ui";
 import type { PublicHangout } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -19,20 +18,25 @@ const DEFAULT_TIME = "19:00";
 
 /**
  * The host's whole job, on one screen: name it, pick a day and time, then
- * either say where or hand that question to the wheel. Publishing is the last
- * button, so nothing reaches the chat half-finished.
+ * either say where or hand that question to the wheel.
+ *
+ * The card is already in the chat by the time anyone gets here — /hangout posts
+ * it — so saving edits that message rather than sending anything new.
  */
 export function HangoutForm({
   hangout,
   token,
   onSaved,
+  onCancel,
 }: {
   hangout: PublicHangout;
   token: string;
   onSaved: () => void;
+  /** Omitted when the hangout has no details yet: there is nothing to go back
+   *  to, so the screen offers the header's back arrow instead. */
+  onCancel?: () => void;
 }) {
   const saveDetails = useMutation(api.hangouts.saveDetails);
-  const publishHangout = useAction(api.telegram.publishHangout);
 
   const [title, setTitle] = useState(hangout.title);
   const [when, setWhen] = useState<LocalWhen>(
@@ -42,10 +46,9 @@ export function HangoutForm({
   const [place, setPlace] = useState(hangout.place ?? "");
   const [busy, setBusy] = useState(false);
 
-  const isDraft = hangout.status === "draft";
   const ready = title.trim().length > 0 && Boolean(when.date) && Boolean(when.time);
 
-  async function save(thenPublish: boolean) {
+  async function save() {
     if (!ready || busy) return;
     setBusy(true);
     try {
@@ -57,9 +60,6 @@ export function HangoutForm({
         place: useWheel ? undefined : place,
         decideWithWheel: useWheel,
       });
-      if (thenPublish) {
-        await publishHangout({ initData: signedInitData, code: hangout.code, token });
-      }
       onSaved();
     } catch (err) {
       alertError(err);
@@ -119,12 +119,12 @@ export function HangoutForm({
       </div>
 
       <Dock>
-        <Button size="lg" disabled={!ready || busy} onClick={() => void save(isDraft)}>
-          <Send />
-          {isDraft ? "Post it to the chat" : "Save changes"}
+        <Button size="lg" disabled={!ready || busy} onClick={() => void save()}>
+          <Check />
+          Save
         </Button>
-        {!isDraft && (
-          <Button variant="ghost" disabled={busy} onClick={onSaved}>
+        {onCancel && (
+          <Button variant="ghost" disabled={busy} onClick={onCancel}>
             Cancel
           </Button>
         )}

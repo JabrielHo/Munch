@@ -12,9 +12,9 @@ import { v } from "convex/values";
  * anywhere.
  */
 export default defineSchema({
-  // The plan itself: /hangout starts one as a draft, the host fills in the
-  // details in the Mini App, and publishing turns the chat message into a live
-  // RSVP card that the bot edits in place.
+  // The plan itself: /hangout posts a live RSVP card straight away and the host
+  // fills in the details afterwards, which the bot edits into the same message.
+  // A hangout is real from the moment it is created — there is no draft step.
   hangouts: defineTable({
     code: v.string(), // random UUID; rides in the Mini App's startapp link
     title: v.string(),
@@ -23,9 +23,10 @@ export default defineSchema({
     tgHostUserId: v.number(),
     tgMessageId: v.optional(v.number()), // the bot's card, edited in place
     tgRefreshPending: v.optional(v.boolean()), // a card re-render is already scheduled
-    // "draft" = host still filling it in, invisible to RSVPs; "open" = live in
-    // the chat; "cancelled" = called off, read-only forever.
-    status: v.union(v.literal("draft"), v.literal("open"), v.literal("cancelled")),
+    // "cancelled" = called off, read-only forever.
+    status: v.union(v.literal("open"), v.literal("cancelled")),
+    // Unset until the host picks a day, which the card shows as "TBC". People
+    // can still say they're coming before then.
     startsAt: v.optional(v.number()), // ms epoch; the wall clock is Singapore time
     place: v.optional(v.string()), // typed by the host, or copied from a decided round
     // Set when the group is deciding the place with the wheel instead. The
