@@ -2,12 +2,56 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 /**
- * Rooms are born in a Telegram group chat (/munch). Whoever ran the command
- * starts the round; everyone else is just a Telegram user, identified as
- * clientId "tg:<telegram user id>". There are no accounts anywhere. Browser
- * sessions without Telegram (dev only) fall back to a random per-browser id.
+ * Everything here is born in a Telegram group chat. A hangout is the plan —
+ * when, where, and who is coming. A room is the smaller thing: one round of
+ * picking a place by voting or spinning the wheel, either standalone (/munch)
+ * or attached to a hangout whose place is still up in the air.
+ *
+ * Whoever ran the command hosts it; everyone else is just a Telegram user,
+ * identified as clientId "tg:<telegram user id>". There are no accounts
+ * anywhere.
  */
 export default defineSchema({
+  // The plan itself: /hangout starts one as a draft, the host fills in the
+  // details in the Mini App, and publishing turns the chat message into a live
+  // RSVP card that the bot edits in place.
+  hangouts: defineTable({
+    code: v.string(), // random UUID; rides in the Mini App's startapp link
+    title: v.string(),
+    hostName: v.string(), // the creator's Telegram name, snapshotted at /hangout
+    tgChatId: v.number(),
+    tgHostUserId: v.number(),
+    tgMessageId: v.optional(v.number()), // the bot's card, edited in place
+    tgRefreshPending: v.optional(v.boolean()), // a card re-render is already scheduled
+    // "draft" = host still filling it in, invisible to RSVPs; "open" = live in
+    // the chat; "cancelled" = called off, read-only forever.
+    status: v.union(v.literal("draft"), v.literal("open"), v.literal("cancelled")),
+    startsAt: v.optional(v.number()), // ms epoch; the wall clock is Singapore time
+    place: v.optional(v.string()), // typed by the host, or copied from a decided round
+    // Set when the group is deciding the place with the wheel instead. The
+    // round's winner is written back into `place` when it lands.
+    roomId: v.optional(v.id("rooms")),
+    // The scheduled day-of reminder, kept so moving the hangout can cancel it.
+    reminderJobId: v.optional(v.id("_scheduled_functions")),
+    remindedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_code", ["code"])
+    .index("by_tg_chat", ["tgChatId", "createdAt"]),
+
+  // One row per person per hangout, rewritten in place when they change their
+  // mind. tgUserId comes from the tapped button or the access token, never from
+  // a client argument.
+  rsvps: defineTable({
+    hangoutId: v.id("hangouts"),
+    tgUserId: v.number(),
+    name: v.string(),
+    answer: v.union(v.literal("in"), v.literal("maybe"), v.literal("out")),
+    updatedAt: v.number(),
+  })
+    .index("by_hangout", ["hangoutId"])
+    .index("by_hangout_user", ["hangoutId", "tgUserId"]),
+
   rooms: defineTable({
     code: v.string(), // random UUID; rides in the Mini App's startapp link
     title: v.string(),
@@ -26,6 +70,9 @@ export default defineSchema({
     spinStartedAt: v.optional(v.number()), // ms epoch; clients sync their animation to it
     wheelOptionIds: v.optional(v.array(v.id("options"))), // frozen wheel order
     closedAt: v.optional(v.number()), // set = read-only, forever
+    // Set when this round exists to answer a hangout's "where?". The winner is
+    // written back to that hangout's `place`.
+    hangoutId: v.optional(v.id("hangouts")),
     createdAt: v.number(),
   })
     .index("by_code", ["code"])

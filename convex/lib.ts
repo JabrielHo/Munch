@@ -4,6 +4,7 @@ import type { QueryCtx, MutationCtx } from "./_generated/server";
 export const MAX_NAME_LENGTH = 20;
 export const MAX_TITLE_LENGTH = 40;
 export const MAX_OPTION_LENGTH = 60;
+export const MAX_PLACE_LENGTH = 80;
 
 /** Collapses runs of whitespace inside the text as well as trimming the ends. */
 export function tidyText(text: string, maxLength: number): string {
@@ -35,12 +36,16 @@ export function voteWord(count: number): string {
   return count === 1 ? "vote" : "votes";
 }
 
+export function plural(count: number, one: string, many: string): string {
+  return count === 1 ? one : many;
+}
+
 /** Shared with the History screen, which re-derives the same rule at render
  *  time — hence living here rather than in rooms.ts. */
 export const ANYONE_CAN_CLOSE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 /** Expiry alone cannot revoke access: a client that quietly stops calling
- *  enterRoom — or a token lifted out of localStorage and replayed straight at
+ *  enterGroup — or a token lifted out of localStorage and replayed straight at
  *  the deployment — would keep working for the rest of the hour after its
  *  holder is kicked out. Live clients re-check every ~5 minutes, so this is
  *  three missed refreshes of slack. */
@@ -48,7 +53,7 @@ export const MEMBERSHIP_CHECK_MAX_AGE_MS = 15 * 60 * 1000;
 
 /** Identity comes from here and never from client arguments, so a member cannot
  *  act as anyone else and a non-member has no token at all. Grants are minted
- *  by enterRoom in telegram.ts. */
+ *  by enterGroup in telegram.ts. */
 export async function sessionFromToken(ctx: QueryCtx | MutationCtx, token: string) {
   if (!token) return null;
   const grant = await ctx.db

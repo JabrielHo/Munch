@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ACCENT_COLORS as WEDGE_COLORS } from "../lib/ui";
+import { ACCENT_COLORS as WEDGE_COLORS } from "@/lib/ui";
 
 export interface WheelItem {
   id: string;
@@ -17,6 +17,7 @@ interface Props {
 
 /** How far out from the centre each emoji sits, as a fraction of the radius. */
 const EMOJI_RADIUS_RATIO = 0.62;
+const WHEEL_SIZE = "min(72vw, 300px)";
 
 export function SpinWheel({ items, angle, animate, durationMs }: Props) {
   const wedgeCount = Math.max(items.length, 1);
@@ -42,10 +43,13 @@ export function SpinWheel({ items, angle, animate, durationMs }: Props) {
     .join(", ")})`;
 
   return (
-    <div className="wheel-wrap">
-      <div className="wheel-pointer" />
+    <div
+      className="relative mx-auto"
+      style={{ width: WHEEL_SIZE, height: WHEEL_SIZE, ["--r" as string]: `calc(${WHEEL_SIZE} / 2)` }}>
+      {/* The fixed pointer the winning wedge is rotated underneath. */}
+      <div className="absolute -top-1 left-1/2 z-10 size-0 -translate-x-1/2 border-x-[10px] border-t-[18px] border-x-transparent border-t-primary" />
       <div
-        className="wheel"
+        className="absolute inset-0 rounded-full border-8 border-card shadow-lg"
         style={{
           background: wedgeCount === 1 ? WEDGE_COLORS[0] : wedgeGradient,
           transform: `rotate(${rotation}deg)`,
@@ -59,13 +63,18 @@ export function SpinWheel({ items, angle, animate, durationMs }: Props) {
             `translate(-50%, -50%) rotate(${wedgeCenter}deg) ` +
             `translateY(calc(var(--r) * -${EMOJI_RADIUS_RATIO})) rotate(${-wedgeCenter}deg)`;
           return (
-            <span key={item.id} className="wheel-emoji" style={{ transform }}>
+            <span
+              key={item.id}
+              className="absolute left-1/2 top-1/2 text-2xl"
+              style={{ transform }}>
               {item.emoji}
             </span>
           );
         })}
       </div>
-      <div className="wheel-hub">🍜</div>
+      <div className="absolute left-1/2 top-1/2 grid size-12 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-card text-xl shadow-md">
+        🍜
+      </div>
     </div>
   );
 }

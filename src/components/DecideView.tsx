@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { usePrefersReducedMotion } from "../lib/hooks";
-import type { PublicRoom, PublicOption } from "../lib/types";
+import { usePrefersReducedMotion } from "@/lib/hooks";
+import type { PublicRoom, PublicOption } from "@/lib/types";
 import { SpinWheel, type WheelItem } from "./SpinWheel";
 import { ResultView } from "./ResultView";
 
@@ -8,6 +8,7 @@ interface Props {
   room: PublicRoom;
   options: PublicOption[];
   viewerIsHost: boolean;
+  backTo: string;
 }
 
 const SPIN_MS = 4200;
@@ -23,7 +24,7 @@ const MIN_ANIMATION_MS = 150;
  * server-side, so every phone animates to the same result. <Room> keys this
  * component by spinStartedAt, so a fresh spin remounts it and replays cleanly.
  */
-export function DecideView({ room, options, viewerIsHost }: Props) {
+export function DecideView({ room, options, viewerIsHost, backTo }: Props) {
   const prefersReducedMotion = usePrefersReducedMotion();
   const isSpin = room.mode === "spin";
   const totalMs = isSpin
@@ -49,34 +50,44 @@ export function DecideView({ room, options, viewerIsHost }: Props) {
   }, [revealed, remainingMs]);
 
   if (revealed) {
-    return <ResultView room={room} options={options} reducedMotion={prefersReducedMotion} />;
-  }
-
-  if (isSpin) {
     return (
-      <div className="screen decide">
-        <div className="decide-hype">Round and round… 🌀</div>
-        <SpinWheel
-          items={wheelItems(room, options)}
-          angle={room.spinAngle ?? 0}
-          animate={!prefersReducedMotion && remainingMs > MIN_ANIMATION_MS}
-          durationMs={remainingMs}
-        />
-        <div className="decide-guest">
-          {viewerIsHost ? "Here we go!" : "Host is spinning… hang tight"}
-        </div>
-      </div>
+      <ResultView
+        room={room}
+        options={options}
+        reducedMotion={prefersReducedMotion}
+        backTo={backTo}
+      />
     );
   }
 
   return (
-    <div className="screen decide">
-      <div className="decide-hype">Locking it in…</div>
-      <div className="suspense">
-        <span>·</span>
-        <span>·</span>
-        <span>·</span>
-      </div>
+    <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col items-center justify-center gap-6 px-6">
+      <p className="font-display text-xl font-semibold">
+        {isSpin ? "Round and round… 🌀" : "Locking it in…"}
+      </p>
+      {isSpin ? (
+        <>
+          <SpinWheel
+            items={wheelItems(room, options)}
+            angle={room.spinAngle ?? 0}
+            animate={!prefersReducedMotion && remainingMs > MIN_ANIMATION_MS}
+            durationMs={remainingMs}
+          />
+          <p className="text-sm text-muted-foreground">
+            {viewerIsHost ? "Here we go!" : "Host is spinning — hang tight"}
+          </p>
+        </>
+      ) : (
+        <div className="flex gap-2">
+          {[0, 1, 2].map((dot) => (
+            <span
+              key={dot}
+              className="size-2.5 animate-bounce rounded-full bg-primary"
+              style={{ animationDelay: `${dot * 120}ms` }}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -24,12 +24,17 @@ import {
   voteWord,
 } from "./lib";
 import { computeSpinResult, pickTopVoted, randomRoomName, recordDecision } from "./rooms";
+import { findHangoutByCode } from "./hangouts";
+import { formatDate, formatDay, formatTime, TZ_LABEL } from "./time";
 
 /**
  * The chat is the notice board, the Mini App is where everything happens.
- * /munch posts a scoreboard message the bot edits in place; adding, voting and
- * the starter's spin/lock/end all happen in the app, which re-renders that
- * message through a debounced refresh (scheduleChatRefresh in rooms.ts).
+ *
+ * /hangout posts a card the bot edits in place: the plan on top, the RSVP
+ * buttons underneath, the guest list growing as people tap. /munch posts the
+ * older scoreboard message for a round of picking somewhere to eat. Both
+ * re-render through a debounced refresh rather than an edit per tap, because
+ * Telegram rate limits message edits.
  *
  * Updates arrive on the /telegram route in http.ts, which checks the webhook
  * secret and hands the raw update to handleUpdate at the bottom of this file.
@@ -62,6 +67,8 @@ const MAX_TALLY_ROWS = 8; // options listed on the chat scoreboard
 // and rounds stay live until decided or ended. The one guard on that: a group
 // racing to type /munch merges into ONE round instead of several.
 const MUNCH_MERGE_WINDOW_MS = 90 * 1000;
+/** Names listed on a card before it collapses into a count. */
+const MAX_NAMES_ON_CARD = 12;
 
 /** Read through globalThis so the frontend tsconfig — which type-imports this
  *  module via _generated/api — doesn't need Node globals. */
@@ -117,16 +124,18 @@ function escapeHtml(text: string): string {
 }
 
 const HELP = [
-  "🍽 <b>Munch</b> — decide where to eat, without leaving the chat.",
+  "🎉 <b>Munch</b> — sort out hangouts without leaving the chat.",
   "",
-  "/munch <i>[title]</i> — start a round (run it again for another; each round lives on its own message)",
+  "/hangout <i>[what]</i> — plan something. You pick the day, the time and the place; everyone else taps one button to say if they're coming.",
+  "/plans — what this chat has coming up",
+  "/munch <i>[title]</i> — just deciding where to eat? Start a round and spin the wheel.",
   "",
-  "Then tap 🎡 <b>Open Munch</b> on a round's message: add cravings, vote, and — if you started the round — spin the wheel or lock the top pick. The tally updates here live, and the winner lands right back in the chat.",
+  `Times are ${escapeHtml(TZ_LABEL)}. On the day itself I'll post a reminder with the guest list.`,
 ].join("\n");
 
 const PRIVATE_CHAT_HELP =
-  "🍽 <b>Munch</b> works inside a group chat — add me to the group where your " +
-  "crew argues about food, then send /munch there.\n\n" + HELP;
+  "🎉 <b>Munch</b> works inside a group chat — add me to the group you actually " +
+  "make plans in, then send /hangout there.\n\n" + HELP;
 
 /** closedAt is part of the index, so this never touches the chat's
  *  ever-growing pile of closed rounds. */
@@ -295,15 +304,31 @@ export const refreshSession = internalAction({
   },
 });
 
-/** Telegram renumbers a chat when a group is upgraded to a supergroup. */
+/** Telegram renumbers a chat when a group is upgraded to a supergroup. Access
+ *  grants are chat-scoped too, so they move with it or every open Mini App in
+ *  the group would find itself in the wrong chat. */
 export const migrateChat = internalMutation({
   args: { fromChatId: v.number(), toChatId: v.number() },
   handler: async (ctx, { fromChatId, toChatId }) => {
-    const rooms = await ctx.db
-      .query("rooms")
-      .withIndex("by_tg_chat", (q) => q.eq("tgChatId", fromChatId))
-      .collect();
-    await Promise.all(rooms.map((room) => ctx.db.patch(room._id, { tgChatId: toChatId })));
+    const [rooms, hangouts, grants] = await Promise.all([
+      ctx.db
+        .query("rooms")
+        .withIndex("by_tg_chat", (q) => q.eq("tgChatId", fromChatId))
+        .collect(),
+      ctx.db
+        .query("hangouts")
+        .withIndex("by_tg_chat", (q) => q.eq("tgChatId", fromChatId))
+        .collect(),
+      ctx.db
+        .query("roomSessions")
+        .withIndex("by_chat_user", (q) => q.eq("tgChatId", fromChatId))
+        .collect(),
+    ]);
+    await Promise.all([
+      ...rooms.map((room) => ctx.db.patch(room._id, { tgChatId: toChatId })),
+      ...hangouts.map((hangout) => ctx.db.patch(hangout._id, { tgChatId: toChatId })),
+      ...grants.map((grant) => ctx.db.patch(grant._id, { tgChatId: toChatId })),
+    ]);
   },
 });
 
@@ -523,7 +548,7 @@ async function isChatMember(chatId: number, userId: number): Promise<boolean> {
   return false; // left, kicked, or anything unexpected
 }
 
-/** enterRoom needs this before any grant exists to read the room through. */
+/** enterGroup needs this before any grant exists to read the room through. */
 export const roomChatByCode = internalQuery({
   args: { code: v.string() },
   handler: async (ctx, { code }) => {
@@ -591,24 +616,28 @@ export const dropSession = internalMutation({
   },
 });
 
-/** The entry gate, called before a room renders. Membership is re-checked on
- *  entry after a short grace window and the client re-calls this periodically,
- *  so leaving or being kicked revokes access within minutes. */
-export const enterRoom = action({
+/** The entry gate, called before anything renders. The code names either a
+ *  hangout or a round; both resolve to the one chat the grant is scoped to.
+ *  Membership is re-checked on entry after a short grace window and the client
+ *  re-calls this periodically, so leaving or being kicked revokes access within
+ *  minutes. */
+export const enterGroup = action({
   args: { initData: v.string(), code: v.string() },
   handler: async (ctx, { initData, code }): Promise<{ token: string }> => {
     const user = await verifyInitData(initData);
-    const roomChat = await ctx.runQuery(internal.telegram.roomChatByCode, { code });
-    if (!roomChat) throw new ConvexError("That round isn't here.");
+    const chat =
+      (await ctx.runQuery(internal.hangouts.chatForHangoutCode, { code })) ??
+      (await ctx.runQuery(internal.telegram.roomChatByCode, { code }));
+    if (!chat) throw new ConvexError("That link doesn't lead anywhere any more.");
 
     const existing = await ctx.runQuery(internal.telegram.sessionFor, {
-      tgChatId: roomChat.tgChatId,
+      tgChatId: chat.tgChatId,
       tgUserId: user.id,
     });
     // Recently checked, so trust it and just extend the expiry.
     if (existing && Date.now() - existing.checkedAt < MEMBERSHIP_RECHECK_AFTER_MS) {
       const token = await ctx.runMutation(internal.telegram.upsertSession, {
-        tgChatId: roomChat.tgChatId,
+        tgChatId: chat.tgChatId,
         tgUserId: user.id,
         name: displayName(user),
         recheck: false,
@@ -616,15 +645,15 @@ export const enterRoom = action({
       return { token };
     }
 
-    if (!(await isChatMember(roomChat.tgChatId, user.id))) {
+    if (!(await isChatMember(chat.tgChatId, user.id))) {
       await ctx.runMutation(internal.telegram.dropSession, {
-        tgChatId: roomChat.tgChatId,
+        tgChatId: chat.tgChatId,
         tgUserId: user.id,
       });
       throw new ConvexError("You're not in this group. Open Munch from the group chat to join in.");
     }
     const token = await ctx.runMutation(internal.telegram.upsertSession, {
-      tgChatId: roomChat.tgChatId,
+      tgChatId: chat.tgChatId,
       tgUserId: user.id,
       name: displayName(user),
       recheck: true,
@@ -635,16 +664,18 @@ export const enterRoom = action({
 
 /** DEV ONLY: mint a grant with no membership check, for browser testing
  *  (npx convex run telegram:devGrantSession '{...}'). Internal, so no client
- *  can reach it — the real gate is enterRoom. */
+ *  can reach it — the real gate is enterGroup. */
 export const devGrantSession = internalMutation({
   args: { code: v.string(), tgUserId: v.number(), name: v.string() },
   handler: async (ctx, { code, tgUserId, name }) => {
-    const room = await findRoomByCode(ctx, code);
-    if (!room) throw new ConvexError("No such room.");
+    const anchor =
+      (await findHangoutByCode(ctx, code)) ?? (await findRoomByCode(ctx, code));
+    if (!anchor) throw new ConvexError("No hangout or round with that code.");
+    const tgChatId = anchor.tgChatId;
     const now = Date.now();
     const existing = await ctx.db
       .query("roomSessions")
-      .withIndex("by_chat_user", (q) => q.eq("tgChatId", room.tgChatId).eq("tgUserId", tgUserId))
+      .withIndex("by_chat_user", (q) => q.eq("tgChatId", tgChatId).eq("tgUserId", tgUserId))
       .unique();
     if (existing) {
       await ctx.db.patch(existing._id, {
@@ -658,7 +689,7 @@ export const devGrantSession = internalMutation({
     const token = crypto.randomUUID();
     await ctx.db.insert("roomSessions", {
       token,
-      tgChatId: room.tgChatId,
+      tgChatId,
       tgUserId,
       name,
       checkedAt: now,
@@ -670,6 +701,278 @@ export const devGrantSession = internalMutation({
     return token;
   },
 });
+
+
+// —— Hangouts: the card, the buttons, the reminder ——
+
+type HangoutState = {
+  hangout: Doc<"hangouts">;
+  rsvps: { in: string[]; maybe: string[]; out: string[] };
+  room: Doc<"rooms"> | null;
+};
+
+/** The Mini App link for a hangout. The `h-` prefix is what lets the /tg entry
+ *  screen tell a hangout code from a round code: a round's startapp value is a
+ *  bare UUID, which always begins with a hex digit. Null when
+ *  TELEGRAM_MINIAPP_LINK isn't set, which leaves the message button-less. */
+function miniAppUrl(code: string): string | null {
+  const link = deployEnv().TELEGRAM_MINIAPP_LINK;
+  return link ? `${link.replace(/\/$/, "")}?startapp=h-${code}` : null;
+}
+
+function namesLine(emoji: string, label: string, names: string[]): string | null {
+  if (names.length === 0) return null;
+  const shown = names.slice(0, MAX_NAMES_ON_CARD).map(escapeHtml).join(", ");
+  const overflow = names.length > MAX_NAMES_ON_CARD ? ` +${names.length - MAX_NAMES_ON_CARD}` : "";
+  return `${emoji} <b>${label} (${names.length})</b> · ${shown}${overflow}`;
+}
+
+/** One line answering "where?", whichever way the host chose to answer it. */
+function placeLine(state: HangoutState): string {
+  const { hangout, room } = state;
+  if (hangout.place) {
+    return `📍 <a href="${escapeHtml(googleMapsSearchUrl(hangout.place))}">${escapeHtml(hangout.place)}</a>`;
+  }
+  if (room && !room.closedAt) return "📍 <i>Picking a spot in the app 🎡</i>";
+  return "📍 <i>Somewhere — TBC</i>";
+}
+
+/** Absolute on purpose: this line lives in a message that may sit unedited for
+ *  days, where "Tomorrow" would quietly become a lie. */
+function whenLine(hangout: Doc<"hangouts">): string {
+  if (hangout.startsAt === undefined) return "📅 <i>Day and time TBC</i>";
+  const stamp = `${formatDate(hangout.startsAt)} · ${formatTime(hangout.startsAt)}`;
+  return `📅 <b>${escapeHtml(stamp)}</b>`;
+}
+
+function renderHangoutCard(state: HangoutState): {
+  text: string;
+  reply_markup?: Record<string, unknown>;
+} {
+  const { hangout, rsvps } = state;
+  const openUrl = miniAppUrl(hangout.code);
+
+  if (hangout.status === "cancelled") {
+    return {
+      text:
+        `🚫 <b>${escapeHtml(hangout.title)}</b> — called off\n` +
+        `<i>${escapeHtml(hangout.hostName)} cancelled this one.</i>`,
+    };
+  }
+
+  if (hangout.status === "draft") {
+    return {
+      text:
+        `🗓 <b>${escapeHtml(hangout.title)}</b>\n` +
+        `<i>${escapeHtml(hangout.hostName)} is setting this up…</i>`,
+      ...(openUrl
+        ? { reply_markup: { inline_keyboard: [[{ text: "⚙️ Set it up", url: openUrl }]] } }
+        : {}),
+    };
+  }
+
+  const guestLines = [
+    namesLine("✅", "Coming", rsvps.in),
+    namesLine("🤔", "Maybe", rsvps.maybe),
+    namesLine("❌", "Can't", rsvps.out),
+  ].filter((line): line is string => line !== null);
+
+  const body = [
+    `🎉 <b>${escapeHtml(hangout.title)}</b>`,
+    whenLine(hangout),
+    placeLine(state),
+    "",
+    guestLines.length > 0
+      ? guestLines.join("\n")
+      : "<i>Nobody's answered yet — tap a button 👇</i>",
+  ].join("\n");
+
+  // Three taps, one row, no typing. Everything else lives behind the app.
+  const rsvpRow = [
+    { text: "✅ I'm in", callback_data: `rsvp:${hangout.code}:in` },
+    { text: "🤔 Maybe", callback_data: `rsvp:${hangout.code}:maybe` },
+    { text: "❌ Can't", callback_data: `rsvp:${hangout.code}:out` },
+  ];
+  const keyboard = openUrl
+    ? [rsvpRow, [{ text: "🗓 Open in Munch", url: openUrl }]]
+    : [rsvpRow];
+
+  return { text: body, reply_markup: { inline_keyboard: keyboard } };
+}
+
+async function editHangoutCard(ctx: ActionCtx, hangoutId: Id<"hangouts">) {
+  const state = await ctx.runQuery(internal.hangouts.cardState, { hangoutId });
+  if (!state || state.hangout.tgMessageId === undefined) return;
+  const { text, reply_markup } = renderHangoutCard(state);
+  await callTelegram("editMessageText", {
+    chat_id: state.hangout.tgChatId,
+    message_id: state.hangout.tgMessageId,
+    text,
+    parse_mode: "HTML",
+    reply_markup: reply_markup ?? { inline_keyboard: [] },
+    link_preview_options: { is_disabled: true },
+  });
+}
+
+/** Posts a new card and points the old one at it, so the live plan is always
+ *  the newest thing in the chat rather than buried above an hour of banter. */
+async function postHangoutCard(
+  ctx: ActionCtx,
+  hangoutId: Id<"hangouts">,
+  previousMessageId?: number,
+) {
+  const state = await ctx.runQuery(internal.hangouts.cardState, { hangoutId });
+  if (!state) return;
+  const { text, reply_markup } = renderHangoutCard(state);
+  const sent = (await callTelegram("sendMessage", {
+    chat_id: state.hangout.tgChatId,
+    text,
+    parse_mode: "HTML",
+    ...(reply_markup ? { reply_markup } : {}),
+    link_preview_options: { is_disabled: true },
+  })) as { message_id?: number } | null;
+  if (!sent?.message_id) return;
+
+  await ctx.runMutation(internal.hangouts.setCardMessage, {
+    hangoutId,
+    messageId: sent.message_id,
+  });
+  if (previousMessageId !== undefined && previousMessageId !== sent.message_id) {
+    await callTelegram("editMessageText", {
+      chat_id: state.hangout.tgChatId,
+      message_id: previousMessageId,
+      text: "⬇️ This hangout moved to a newer message below.",
+    });
+  }
+}
+
+export const refreshHangoutCard = internalAction({
+  args: { hangoutId: v.id("hangouts") },
+  handler: async (ctx, { hangoutId }) => {
+    await ctx.runMutation(internal.hangouts.clearCardRefreshPending, { hangoutId });
+    await editHangoutCard(ctx, hangoutId);
+  },
+});
+
+/**
+ * The day-of nudge, booked by hangouts.ts when the plan is published or moved.
+ * A brand-new message rather than an edit, because only a new message pings
+ * everyone's phone — which is the entire point of a reminder.
+ */
+export const sendHangoutReminder = internalAction({
+  args: { hangoutId: v.id("hangouts") },
+  handler: async (ctx, { hangoutId }) => {
+    const state = await ctx.runQuery(internal.hangouts.cardState, { hangoutId });
+    if (!state || state.hangout.status !== "open") return;
+    const { hangout, rsvps } = state;
+    const startsAt = hangout.startsAt;
+    // A hangout with no time can't have a day to be reminded on.
+    if (startsAt === undefined) return;
+    const guestLines = [
+      namesLine("✅", "Coming", rsvps.in),
+      namesLine("🤔", "Maybe", rsvps.maybe),
+    ].filter((line): line is string => line !== null);
+
+    const lines = [
+      `⏰ <b>${escapeHtml(formatDay(startsAt))}: ${escapeHtml(hangout.title)}</b>`,
+      `🕒 ${escapeHtml(formatTime(startsAt))} · ${placeLine(state)}`,
+      "",
+      guestLines.length > 0
+        ? guestLines.join("\n")
+        : "<i>Nobody's said they're coming yet 👀</i>",
+    ];
+    if (!hangout.place) {
+      lines.push("", "<i>Still no spot — open Munch and settle it 🎡</i>");
+    }
+
+    const openUrl = miniAppUrl(hangout.code);
+    await callTelegram("sendMessage", {
+      chat_id: hangout.tgChatId,
+      text: lines.join("\n"),
+      parse_mode: "HTML",
+      ...(openUrl
+        ? { reply_markup: { inline_keyboard: [[{ text: "🗓 Open in Munch", url: openUrl }]] } }
+        : {}),
+      link_preview_options: { is_disabled: true },
+    });
+    await ctx.runMutation(internal.hangouts.markReminded, { hangoutId });
+  },
+});
+
+/** Publishing from the Mini App: flip the draft, then put the live card at the
+ *  bottom of the chat. The token is what proves both identity and membership;
+ *  the signed initData is a second, independent check on the same claim. */
+export const publishHangout = action({
+  args: { initData: v.string(), code: v.string(), token: v.string() },
+  handler: async (ctx, { initData, code, token }) => {
+    await verifyInitData(initData);
+    const { hangoutId, previousMessageId } = await ctx.runMutation(
+      internal.hangouts.markPublished,
+      { code, token },
+    );
+    await postHangoutCard(ctx, hangoutId, previousMessageId);
+  },
+});
+
+export const cancelHangout = action({
+  args: { initData: v.string(), code: v.string(), token: v.string() },
+  handler: async (ctx, { initData, code, token }) => {
+    await verifyInitData(initData);
+    const { hangoutId, announce } = await ctx.runMutation(internal.hangouts.markCancelled, {
+      code,
+      token,
+    });
+    await editHangoutCard(ctx, hangoutId);
+    // A draft was never anyone else's business, so only a published hangout
+    // being called off is worth a notification.
+    if (announce) {
+      const state = await ctx.runQuery(internal.hangouts.cardState, { hangoutId });
+      if (state) {
+        await callTelegram("sendMessage", {
+          chat_id: state.hangout.tgChatId,
+          text: `🚫 <b>${escapeHtml(state.hangout.title)}</b> is off — ${escapeHtml(state.hangout.hostName)} cancelled it.`,
+          parse_mode: "HTML",
+        });
+      }
+    }
+  },
+});
+
+async function startHangout(ctx: ActionCtx, chat: TgChat, from: TgUser, title: string) {
+  const { hangoutId } = await ctx.runMutation(internal.hangouts.createDraft, {
+    chatId: chat.id,
+    hostTgUserId: from.id,
+    hostName: displayName(from),
+    ...(title ? { title } : {}),
+  });
+  await postHangoutCard(ctx, hangoutId);
+}
+
+async function listPlans(ctx: ActionCtx, chatId: number) {
+  const plans = await ctx.runQuery(internal.hangouts.openChatHangouts, { chatId });
+  if (plans.length === 0) {
+    await callTelegram("sendMessage", {
+      chat_id: chatId,
+      text: "Nothing planned yet. Send /hangout to fix that 🎉",
+    });
+    return;
+  }
+  const lines = plans.map((plan) => {
+    // /plans is composed fresh on every run, so relative days are safe here.
+    const when =
+      plan.startsAt === undefined
+        ? "TBC"
+        : `${formatDay(plan.startsAt)} · ${formatTime(plan.startsAt)}`;
+    const where = plan.place ? ` · 📍 ${escapeHtml(plan.place)}` : "";
+    return `• <b>${escapeHtml(plan.title)}</b> — ${escapeHtml(when)}${where}`;
+  });
+  await callTelegram("sendMessage", {
+    chat_id: chatId,
+    text: `🗓 <b>Coming up</b>\n\n${lines.join("\n")}`,
+    parse_mode: "HTML",
+    link_preview_options: { is_disabled: true },
+  });
+}
 
 // —— Handling updates from Telegram ——
 
@@ -695,12 +998,32 @@ function parseCommand(text: string): { name: string; args: string } | null {
   return match ? { name: match[1].toLowerCase(), args: (match[2] ?? "").trim() } : null;
 }
 
-/** Buttons no longer carry actions, so anything tapped on an old scoreboard
- *  message just gets pointed at the app. */
-async function onCallbackQuery(query: TgCallbackQuery) {
+/**
+ * RSVP taps. The update is signed by the webhook secret and carries the tapping
+ * user, so this needs no access token: anyone who can see the card and press a
+ * button on it is in the group already.
+ *
+ * Round scoreboards carry no action buttons any more, so anything else tapped
+ * on an old message just gets pointed at the app.
+ */
+async function onCallbackQuery(ctx: ActionCtx, query: TgCallbackQuery) {
+  const rsvp = /^rsvp:([\w-]+):(in|maybe|out)$/.exec(query.data ?? "");
+  if (!rsvp) {
+    await callTelegram("answerCallbackQuery", {
+      callback_query_id: query.id,
+      text: "That button's retired — open Munch from the message instead.",
+    });
+    return;
+  }
+  const result = await ctx.runMutation(internal.hangouts.rsvpFromChat, {
+    code: rsvp[1],
+    tgUserId: query.from.id,
+    name: displayName(query.from),
+    answer: rsvp[2] as "in" | "maybe" | "out",
+  });
   await callTelegram("answerCallbackQuery", {
     callback_query_id: query.id,
-    text: "Munch lives in the app now — tap 🎡 Open Munch on the round's message.",
+    text: result.message,
   });
 }
 
@@ -780,6 +1103,19 @@ async function onMessage(ctx: ActionCtx, message: TgMessage) {
       await callTelegram("sendMessage", { chat_id: chat.id, text: HELP, parse_mode: "HTML" });
       return;
 
+    case "hangout":
+    case "plan": {
+      const from = message.from;
+      await replyOnError(chat.id, message.message_id, () =>
+        startHangout(ctx, chat, from, command.args),
+      );
+      return;
+    }
+
+    case "plans":
+      await replyOnError(chat.id, message.message_id, () => listPlans(ctx, chat.id));
+      return;
+
     case "munch": {
       const from = message.from;
       await replyOnError(chat.id, message.message_id, () =>
@@ -801,7 +1137,7 @@ export const handleUpdate = internalAction({
   handler: async (ctx, { update }) => {
     const tgUpdate = update as TgUpdate;
     try {
-      if (tgUpdate.callback_query) await onCallbackQuery(tgUpdate.callback_query);
+      if (tgUpdate.callback_query) await onCallbackQuery(ctx, tgUpdate.callback_query);
       else if (tgUpdate.message) await onMessage(ctx, tgUpdate.message);
     } catch (err) {
       console.error("telegram update failed", err);

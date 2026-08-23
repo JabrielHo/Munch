@@ -5,13 +5,15 @@ import { isTelegram, signedInitData } from "./telegram";
 import { readableError } from "./ui";
 
 /**
- * The room access gate. Before a room renders, the app trades its signed
- * Telegram identity for a short-lived token via `enterRoom`, which the server
- * only grants to a current member of the room's group. Every read and write
- * then presents that token, so someone forwarded the link gets nowhere.
+ * The access gate. Before anything renders, the app trades its signed Telegram
+ * identity for a short-lived token via `enterGroup`, which the server only
+ * grants to a current member of that chat. Every read and write then presents
+ * the token, so someone forwarded a link gets nowhere.
  *
- * Refreshing on an interval is what keeps membership being re-checked while the
- * page stays open, so leaving the group revokes access within minutes.
+ * The code in the URL only picks which chat to ask about — it can name a
+ * hangout or a round, and the grant it returns covers the whole group either
+ * way. Refreshing on an interval is what keeps membership being re-checked
+ * while the page stays open, so leaving the group revokes access in minutes.
  */
 
 const TOKEN_KEY = "munch.token";
@@ -22,8 +24,8 @@ export type SessionState =
   | { status: "ok"; token: string }
   | { status: "denied"; message: string };
 
-export function useRoomSession(code: string): SessionState {
-  const enterRoom = useAction(api.telegram.enterRoom);
+export function useGroupSession(code: string): SessionState {
+  const enterGroup = useAction(api.telegram.enterGroup);
   const [state, setState] = useState<SessionState>({ status: "loading" });
 
   useEffect(() => {
@@ -45,19 +47,17 @@ export function useRoomSession(code: string): SessionState {
       }
 
       try {
-        const { token } = await enterRoom({ initData: signedInitData, code });
+        const { token } = await enterGroup({ initData: signedInitData, code });
         localStorage.setItem(TOKEN_KEY, token);
         if (stillMounted) setState({ status: "ok", token });
       } catch (err) {
         const message = readableError(err);
         const membershipDenied = message.includes("not in this group");
-        // A transient failure on an already-open session keeps the room up.
+        // A transient failure on an already-open session keeps the screen up.
         // Only a real membership denial — or a failure on first load — walls it off.
         if (stillMounted) {
           setState((previous) =>
-            membershipDenied || previous.status !== "ok"
-              ? { status: "denied", message }
-              : previous,
+            membershipDenied || previous.status !== "ok" ? { status: "denied", message } : previous,
           );
         }
       }
@@ -69,7 +69,7 @@ export function useRoomSession(code: string): SessionState {
       stillMounted = false;
       clearInterval(intervalId);
     };
-  }, [code, enterRoom]);
+  }, [code, enterGroup]);
 
   return state;
 }

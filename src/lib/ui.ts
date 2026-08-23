@@ -1,7 +1,8 @@
 import { ConvexError } from "convex/values";
+import { hapticResult, showAlert } from "./telegram";
 
-/** The brand accent palette — wheel wedges, confetti and presence dots all draw
- *  from this one source of truth. */
+/** The brand accent palette — wheel wedges, confetti and avatars all draw from
+ *  this one source of truth. */
 export const ACCENT_COLORS = ["#FF5A3C", "#FFC542", "#2FB877", "#7C5CFF", "#4CC4E8"];
 
 /** Soft tints for the emoji tile behind each option. */
@@ -23,6 +24,15 @@ export function avatarColor(seed: string): string {
   return ACCENT_COLORS[hashString(seed) % ACCENT_COLORS.length];
 }
 
+/** The one or two letters an avatar falls back to when there is no photo — and
+ *  there never is, since Munch asks Telegram for nothing but a name. */
+export function initials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "?";
+  const letters = words.length === 1 ? words[0].slice(0, 2) : words[0][0] + words[1][0];
+  return letters.toUpperCase();
+}
+
 export { googleMapsSearchUrl } from "../../convex/lib";
 
 /** The message meant for the user, dug out of whatever was thrown. */
@@ -40,5 +50,6 @@ export function readableError(err: unknown): string {
 
 /** The standard `.catch()` for anything the user just tapped. */
 export function alertError(err: unknown) {
-  alert(readableError(err));
+  hapticResult("error");
+  showAlert(readableError(err));
 }

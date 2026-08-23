@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ACCENT_COLORS } from "../lib/ui";
+import { ACCENT_COLORS } from "@/lib/ui";
 
 const PIECE_COUNT = 44;
 
@@ -18,11 +18,11 @@ export function Confetti() {
   );
 
   return (
-    <div className="confetti" aria-hidden="true">
+    <div className="pointer-events-none fixed inset-0 z-30 overflow-hidden" aria-hidden="true">
       {pieces.map((piece, index) => (
         <span
           key={index}
-          className="confetti-piece"
+          className="animate-confetti absolute top-0 block size-2.5"
           style={{
             left: `${piece.leftPercent}%`,
             background: piece.color,

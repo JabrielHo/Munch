@@ -3,6 +3,7 @@ import { mutation, query, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { classify } from "./foods";
+import { applyRoundWinnerToHangout } from "./hangouts";
 import {
   MAX_NAME_LENGTH,
   MAX_OPTION_LENGTH,
@@ -82,6 +83,7 @@ export async function recordDecision(
   },
 ) {
   const now = Date.now();
+  const winner = await ctx.db.get(decision.winnerId);
   await ctx.db.patch(room._id, {
     phase: "deciding",
     mode: decision.mode,
@@ -92,6 +94,9 @@ export async function recordDecision(
     spinStartedAt: now,
     closedAt: now, // deciding is final
   });
+  // A round started from a hangout exists to answer its "where?", so the answer
+  // goes straight back onto the plan.
+  if (winner) await applyRoundWinnerToHangout(ctx, room, winner.text);
 }
 
 /** Computed server-side so every phone's wheel animates to the same result. */
@@ -232,10 +237,15 @@ export const getRoom = query({
       ...option,
       mine: addedByClientId === clientId,
     }));
-    const { tgChatId, tgHostUserId, tgMessageId, tgRefreshPending, hostName, ...publicRoom } = room;
+    const { tgChatId, tgHostUserId, tgMessageId, tgRefreshPending, hostName, hangoutId, ...publicRoom } =
+      room;
+    // The round screen's back button goes to the hangout that spawned it, when
+    // there is one, rather than to the flat list of rounds.
+    const hangout = hangoutId ? await ctx.db.get(hangoutId) : null;
 
     return {
       room: publicRoom,
+      hangoutCode: hangout?.code ?? null,
       options,
       // Only gates what the UI draws; host actions re-verify the signed initData.
       viewerIsHost: isRoundStarter(room, clientId),
@@ -244,22 +254,20 @@ export const getRoom = query({
   },
 });
 
-/** Every round this group chat has run, newest first. Holding any one round's
- *  code unlocks the whole list — you only get a code from the chat itself.
+/** Every round this group chat has run, newest first. The access token is
+ *  already scoped to one chat, so it names the group by itself.
  *
- *  Returns null rather than throwing for an unknown code, like getRoom, because
- *  a thrown query error lands in React with no boundary to catch it.
+ *  Returns null rather than throwing when the token is stale, like getRoom,
+ *  because a thrown query error lands in React with no boundary to catch it.
  *
  *  Whether a round is still closable is deliberately NOT computed here: it
  *  depends on wall-clock age, and a reactive query only re-runs when data
- *  changes, so the flag would freeze. History derives it at render time. */
+ *  changes, so the flag would freeze. The client derives it at render time. */
 export const groupHistory = query({
-  args: { code: v.string(), token: v.string() },
-  handler: async (ctx, { code, token }) => {
+  args: { token: v.string() },
+  handler: async (ctx, { token }) => {
     const session = await sessionFromToken(ctx, token);
     if (!session) return null;
-    const anchorRoom = await findRoomByCode(ctx, code);
-    if (!anchorRoom || anchorRoom.tgChatId !== session.tgChatId) return null;
     const clientId = session.clientId;
 
     // Two index-bounded reads, because a chat's history grows forever. The
@@ -269,13 +277,13 @@ export const groupHistory = query({
       ctx.db
         .query("rooms")
         .withIndex("by_tg_chat", (q) =>
-          q.eq("tgChatId", anchorRoom.tgChatId).eq("closedAt", undefined),
+          q.eq("tgChatId", session.tgChatId).eq("closedAt", undefined),
         )
         .order("desc")
         .take(MAX_HISTORY_ROUNDS),
       ctx.db
         .query("rooms")
-        .withIndex("by_tg_chat", (q) => q.eq("tgChatId", anchorRoom.tgChatId).gt("closedAt", 0))
+        .withIndex("by_tg_chat", (q) => q.eq("tgChatId", session.tgChatId).gt("closedAt", 0))
         .order("desc")
         .take(MAX_HISTORY_ROUNDS),
     ]);
@@ -295,6 +303,8 @@ export const groupHistory = query({
           winner: winner ? { emoji: winner.emoji, text: winner.text } : null,
           decidedVotes: round.decidedVotes,
           mine: isRoundStarter(round, clientId),
+          // Rounds spun up by a hangout are listed under that hangout instead.
+          fromHangout: round.hangoutId !== undefined,
         };
       }),
     );

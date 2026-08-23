@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { ConvexProvider, ConvexReactClient } from "convex/react";
 import App from "./App";
+import { markAppReady } from "./lib/telegram";
 import "./index.css";
 
 const convexUrl = import.meta.env.VITE_CONVEX_URL;
@@ -17,6 +18,10 @@ if (!convexUrl) {
 }
 
 const convex = new ConvexReactClient(convexUrl);
+
+// Dismiss Telegram's loader and adopt its light/dark choice before the first
+// paint, so the app never flashes the wrong theme at the user.
+markAppReady();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

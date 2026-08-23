@@ -1,925 +1,193 @@
-/* ============================================================
-   Munch — "Stop asking. Start eating."
-   A warm, tactile, candy-press design system. Fonts (Fredoka +
-   Nunito) are loaded in index.html. Color carries meaning:
-   tomato = go/CTA · yolk = votes · lime = live/done · grape = host/yours.
-   ============================================================ */
+@import "tailwindcss";
+@import "tw-animate-css";
 
+/* Telegram decides light or dark, and the Mini App bridge stamps `.dark` on
+   <html> to match (see src/lib/telegram.ts). A Mini App that ignores the host
+   theme reads as a foreign web page bolted into the chat. */
+@custom-variant dark (&:is(.dark *));
+
+/* Munch's own palette rather than Telegram's: the warm cream and the orange are
+   the brand, and they survive the jump from "where do we eat" to "when are we
+   meeting". Only the neutrals flip with the theme. */
 :root {
-  /* — Surfaces & ink — */
-  --bg: #fff7ec;
+  --radius: 1rem;
+
+  --background: #fff7ec;
+  --foreground: #2b1b14;
   --card: #ffffff;
-  --ink: #2b2118;
-  --ink-soft: #7a6a58;
-  --hairline: #efe2ce;
+  --card-foreground: #2b1b14;
+  --popover: #ffffff;
+  --popover-foreground: #2b1b14;
+  --primary: #ff5a3c;
+  --primary-foreground: #ffffff;
+  --secondary: #ffe3dc;
+  --secondary-foreground: #7a2d1a;
+  --muted: #f6ece0;
+  --muted-foreground: #8a6f5d;
+  --accent: #ffc542;
+  --accent-foreground: #4a3208;
+  --destructive: #d93b3b;
+  --destructive-foreground: #ffffff;
+  --border: #efe0ce;
+  --input: #efe0ce;
+  --ring: #ff5a3c;
 
-  /* — Semantic accents — */
-  --primary: #ff5a3c; /* tomato — go / CTA (pairs with --ink text: 5.1:1) */
-  --primary-press: #d8401f;
-  --yolk: #ffc542; /* votes */
-  --yolk-press: #e0a41f;
-  --lime: #2fb877; /* live / done */
-  --grape: #7c5cff; /* host / yours */
-  --grape-press: #5b3fd6;
+  /* The three RSVP answers, used by chips, dots and counts alike. */
+  --going: #17976a;
+  --going-soft: #d9f4e8;
+  --maybe: #a97806;
+  --maybe-soft: #fdefcd;
+  --cant: #b4453f;
+  --cant-soft: #fbe0dd;
+}
 
-  /* — Radii — */
-  --r-chip: 999px;
-  --r-input: 16px;
-  --r-button: 18px;
-  --r-card: 20px;
-  --r-hero: 24px;
-  --r-fab: 50%;
+.dark {
+  --background: #17110d;
+  --foreground: #f7efe6;
+  --card: #211811;
+  --card-foreground: #f7efe6;
+  --popover: #211811;
+  --popover-foreground: #f7efe6;
+  --primary: #ff6b4f;
+  --primary-foreground: #23120c;
+  --secondary: #3a251c;
+  --secondary-foreground: #ffd9cf;
+  --muted: #2b201a;
+  --muted-foreground: #b9a392;
+  --accent: #ffc542;
+  --accent-foreground: #2a1c04;
+  --destructive: #f06a6a;
+  --destructive-foreground: #23120c;
+  --border: #3a2b21;
+  --input: #3a2b21;
+  --ring: #ff6b4f;
 
-  /* — Hard-candy shadows (solid offset, no blur) — */
-  --shadow-btn-primary: 0 4px 0 var(--primary-press);
-  --shadow-btn-grape: 0 4px 0 var(--grape-press);
-  --shadow-vote: 0 3px 0 var(--yolk-press);
-  --shadow-card: 0 2px 0 rgba(43, 33, 24, 0.05), 0 10px 22px -10px rgba(43, 33, 24, 0.14);
+  --going: #4fd3a1;
+  --going-soft: #123a2d;
+  --maybe: #ffcc5c;
+  --maybe-soft: #3b2f10;
+  --cant: #ff8b84;
+  --cant-soft: #3c1f1d;
+}
 
-  /* — Motion — */
-  --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --ease-soft: cubic-bezier(0.22, 1, 0.36, 1);
+@theme inline {
+  --font-display: "Fredoka", ui-rounded, "Segoe UI", system-ui, sans-serif;
+  --font-sans: "Nunito", ui-rounded, "Segoe UI", system-ui, sans-serif;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-going: var(--going);
+  --color-going-soft: var(--going-soft);
+  --color-maybe: var(--maybe);
+  --color-maybe-soft: var(--maybe-soft);
+  --color-cant: var(--cant);
+  --color-cant-soft: var(--cant-soft);
+
+  --radius-sm: calc(var(--radius) - 6px);
+  --radius-md: calc(var(--radius) - 3px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 6px);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    /* Telegram's webview reports a viewport that changes as the keyboard opens;
+       dvh keeps the dock glued to the real bottom instead of the phantom one. */
+    min-height: 100dvh;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    min-height: 100dvh;
+    overscroll-behavior-y: none;
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply font-display;
+  }
+
+  /* Telegram hands taps straight through, so the grey flash is pure noise. */
+  button,
+  a {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+@layer utilities {
+  /* Home-indicator clearance on iPhones, zero everywhere else. */
+  .pb-safe {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+
+  .pt-safe {
+    padding-top: max(0.75rem, env(safe-area-inset-top));
+  }
+}
+
+/* The wheel's easing: a hard shove, then a long coast to the winner. */
+@theme {
   --ease-spin: cubic-bezier(0.16, 1, 0.3, 1);
-
-  /* — Type — */
-  --font-display: "Fredoka", ui-rounded, system-ui, sans-serif;
-  --font-body: "Nunito", ui-rounded, system-ui, sans-serif;
 }
 
-* {
-  box-sizing: border-box;
+@keyframes confetti-fall {
+  0% {
+    transform: translateY(-10vh) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(110vh) rotate(720deg);
+    opacity: 0;
+  }
 }
 
-html,
-body,
-#root {
-  height: 100%;
-}
-
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--ink);
-  font-family: var(--font-body);
-  font-size: 16px;
-  line-height: 1.4;
-  -webkit-font-smoothing: antialiased;
-  -webkit-tap-highlight-color: transparent;
-  overscroll-behavior-y: none;
-}
-
-h1,
-h2,
-h3 {
-  font-family: var(--font-display);
-  font-weight: 700;
-  margin: 0;
-  line-height: 1.1;
-}
-
-button {
-  font-family: inherit;
-  cursor: pointer;
-}
-
-input {
-  font-family: inherit;
-}
-
-::selection {
-  background: var(--yolk);
-  color: var(--ink);
-}
-
-/* ——— Layout ——— */
-.screen {
-  width: 100%;
-  max-width: 460px;
-  margin: 0 auto;
-  min-height: 100dvh;
-  padding: 20px 18px calc(20px + env(safe-area-inset-bottom));
-  display: flex;
-  flex-direction: column;
-}
-
-.center {
-  text-align: center;
-}
-
-/* ——— Buttons ——— */
-.btn {
-  border: none;
-  border-radius: var(--r-button);
-  font-family: var(--font-display);
-  font-weight: 600;
-  font-size: 17px;
-  padding: 15px 20px;
-  color: var(--ink); /* dark ink on tomato = 5.1:1 (white would be 3.1:1) */
-  text-decoration: none;
-  background: var(--primary);
-  box-shadow: var(--shadow-btn-primary);
-  transition:
-    transform 120ms var(--ease-pop),
-    box-shadow 120ms var(--ease-pop),
-    filter 120ms ease;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-.btn:active:not(:disabled) {
-  transform: translateY(4px);
-  box-shadow: 0 0 0 var(--primary-press);
-}
-.btn:disabled {
-  filter: saturate(0.5) opacity(0.7);
-  cursor: default;
-}
-.btn--block {
-  width: 100%;
-}
-.btn--lg {
-  font-size: 19px;
-  padding: 18px 22px;
-}
-.btn--grape {
-  background: var(--grape);
-  color: #fff; /* white reads on grape; tomato's ink override doesn't apply here */
-  box-shadow: var(--shadow-btn-grape);
-}
-.btn--grape:active:not(:disabled) {
-  box-shadow: 0 0 0 var(--grape-press);
-}
-.btn--ghost {
-  background: transparent;
-  color: var(--grape);
-  border: 2px solid var(--grape);
-  box-shadow: none;
-}
-.btn--ghost:active:not(:disabled) {
-  transform: translateY(2px);
-}
-
-/* circular send / icon button */
-.fab {
-  flex: 0 0 auto;
-  width: 50px;
-  height: 50px;
-  border: none;
-  border-radius: var(--r-fab);
-  background: var(--primary);
-  color: var(--ink); /* dark ink on tomato = 5.1:1 */
-  box-shadow: var(--shadow-btn-primary);
-  font-size: 22px;
-  display: grid;
-  place-items: center;
-  transition:
-    transform 120ms var(--ease-pop),
-    box-shadow 120ms var(--ease-pop);
-}
-.fab:active:not(:disabled) {
-  transform: translateY(4px);
-  box-shadow: 0 0 0 var(--primary-press);
-}
-.fab:disabled {
-  filter: opacity(0.5);
-}
-
-/* ——— Inputs ——— */
-.input {
-  width: 100%;
-  border: 2px solid var(--hairline);
-  border-radius: var(--r-input);
-  background: var(--card);
-  color: var(--ink);
-  font-size: 16px; /* >=16px stops iOS zoom */
-  padding: 14px 16px;
-  outline: none;
-  transition: border-color 120ms ease;
-}
-.input::placeholder {
-  color: var(--ink-soft);
-}
-.input:focus {
-  border-color: var(--primary);
-}
-
-/* ——— Cards ——— */
-.card {
-  background: var(--card);
-  border-radius: var(--r-card);
-  box-shadow: var(--shadow-card);
-  padding: 18px;
-}
-.card--hero {
-  border-radius: var(--r-hero);
-}
-
-/* ============================================================
-   HOME
-   ============================================================ */
-.home {
-  justify-content: center;
-  gap: 20px;
-}
-.home-top {
-  text-align: center;
-}
-.wordmark {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 52px;
-  color: #ec4a28; /* a hair deeper than --primary so the big text clears 3:1 on --bg */
-  letter-spacing: -0.01em;
-  line-height: 1;
-}
-.tagline {
-  margin-top: 8px;
-  font-size: 18px;
-  color: var(--ink-soft);
-  font-weight: 700;
-}
-.linklike {
-  background: none;
-  border: none;
-  color: var(--ink-soft);
-  font-weight: 700;
-  font-size: 13px;
-  padding: 4px;
-  text-decoration: none;
-}
-
-/* ============================================================
-   ROOM — collecting
-   ============================================================ */
-.room {
-  padding-bottom: 132px; /* clear the sticky dock */
-}
-.room-header {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  /* Solid almost to the bottom edge: on narrow screens the header grows
-     (wrapping presence pills), and content scrolling under a too-early fade
-     shows through the pills row. */
-  background: linear-gradient(var(--bg) calc(100% - 10px), transparent);
-  padding: 6px 0 12px;
-  margin-bottom: 4px;
-}
-.room-titlerow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-.room-title {
-  font-size: 26px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex: 1;
-}
-.room-back {
-  flex: 0 0 auto;
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--card);
-  border: 2px solid var(--hairline);
-  color: var(--ink);
-  font-size: 18px;
-  font-weight: 800;
-  text-decoration: none;
-  transition: transform 120ms var(--ease-pop);
-}
-.room-back:active {
-  transform: scale(0.92);
-}
-.closed-badge {
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 800;
-  color: var(--ink-soft);
-  background: var(--card);
-  border: 2px solid var(--hairline);
-  border-radius: var(--r-chip);
-  padding: 4px 10px;
-}
-.room-title span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.live-dot {
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 800;
-  color: var(--lime);
-  letter-spacing: 0.06em;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-.live-dot::before {
-  content: "";
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--lime);
-  animation: live-pulse 1.6s ease-in-out infinite;
-}
-.room-subrow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 10px;
-}
-
-/* presence */
-.here-count {
-  font-size: 13px;
-  font-weight: 800;
-  color: var(--ink-soft);
-  white-space: nowrap;
-}
-.presence-names {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 10px;
-}
-.who-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--card);
-  border: 2px solid var(--hairline);
-  border-radius: var(--r-chip);
-  padding: 4px 11px;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--ink);
-  max-width: 100%;
-}
-.who-dot {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-/* ——— Option list ——— */
-.options {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 6px;
-}
-.option-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: var(--card);
-  border-radius: var(--r-card);
-  box-shadow: var(--shadow-card);
-  padding: 12px;
-  /* enables smooth position changes when the list re-sorts by votes */
-  transition: transform 260ms var(--ease-soft);
-  animation: pop-in 260ms var(--ease-pop) both;
-}
-.option-row--mine {
-  outline: 2px solid var(--grape);
-  outline-offset: -2px;
-}
-.option-emoji {
-  flex: 0 0 auto;
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
-  display: grid;
-  place-items: center;
-  font-size: 26px;
-}
-.option-main {
-  flex: 1;
-  min-width: 0;
-}
-.option-name {
-  font-family: var(--font-display);
-  font-weight: 600;
-  font-size: 18px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.option-meta {
-  font-size: 13px;
-  color: var(--ink-soft);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.option-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: #fff3da;
-  color: #9a7b2e;
-  border-radius: var(--r-chip);
-  padding: 2px 8px;
-  font-size: 12px;
-  font-weight: 800;
-}
-.option-remove {
-  background: none;
-  border: none;
-  color: var(--ink-soft);
-  font-size: 16px;
-  padding: 2px 6px;
-  align-self: center;
-}
-
-/* vote button */
-.vote-btn {
-  position: relative;
-  flex: 0 0 auto;
-  min-width: 50px;
-  height: 56px;
-  border: none;
-  border-radius: 16px;
-  background: #fff6df;
-  color: var(--yolk-press);
-  box-shadow: var(--shadow-vote);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-  transition:
-    transform 120ms var(--ease-pop),
-    box-shadow 120ms var(--ease-pop),
-    background 160ms ease,
-    color 160ms ease;
-}
-.vote-btn:active:not(:disabled) {
-  transform: translateY(3px);
-  box-shadow: 0 0 0 var(--yolk-press);
-}
-.vote-btn--on {
-  background: var(--yolk);
-  color: var(--ink);
-}
-.vote-count {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 22px;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-.vote-count--bump {
-  animation: vote-bounce 320ms var(--ease-pop);
-}
-.vote-plus {
-  font-size: 11px;
-  font-weight: 800;
-  opacity: 0.8;
-}
-.vote-float {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 16px;
-  pointer-events: none;
-  animation: float-up 700ms var(--ease-soft) forwards;
-}
-
-.empty {
-  text-align: center;
-  color: var(--ink-soft);
-  font-weight: 700;
-  padding: 32px 16px;
-}
-
-/* closed-room read-only bits */
-.chosen-card {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin: 4px 0 12px;
-  border: 2px solid var(--lime);
-}
-.chosen-emoji {
-  flex: 0 0 auto;
-  width: 56px;
-  height: 56px;
-  border-radius: 16px;
-  display: grid;
-  place-items: center;
-  font-size: 30px;
-}
-.chosen-main {
-  min-width: 0;
-}
-.chosen-kicker {
-  font-size: 13px;
-  font-weight: 800;
-  color: var(--ink-soft);
-}
-.chosen-name {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 24px;
-  line-height: 1.1;
-}
-.option-row--won {
-  outline: 2px solid var(--lime);
-  outline-offset: -2px;
-}
-.vote-static {
-  flex: 0 0 auto;
-  min-width: 52px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 22px;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-soft);
-  line-height: 1;
-}
-.vote-static span {
-  font-family: var(--font-body);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-/* ——— Bottom dock (single sticky layer) ——— */
-.dock {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px 18px calc(12px + env(safe-area-inset-bottom));
-  background: linear-gradient(transparent, var(--bg) 28%);
-}
-.dock-inner {
-  width: 100%;
-  max-width: 460px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.add-bar {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-.add-bar .input {
-  flex: 1;
-  box-shadow: var(--shadow-card);
-  border-color: transparent;
-}
-.host-controls {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.host-controls .btn {
-  width: 100%;
-}
-.guest-waiting {
-  text-align: center;
-  font-weight: 800;
-  color: var(--ink-soft);
-  font-size: 14px;
-  padding: 6px;
-  animation: live-pulse 2.4s ease-in-out infinite;
-}
-/* ============================================================
-   HISTORY — all of a group's rounds
-   ============================================================ */
-/* The tappable part of a history row (emoji + title + meta); the status badge
-   and Close sit outside it so taps can't misfire into navigation. */
-.history-link {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex: 1;
-  min-width: 0;
-  text-decoration: none;
-  color: inherit;
-}
-.history-close {
-  flex: 0 0 auto;
-  font-size: 13px;
-}
-
-/* ============================================================
-   DECIDE — the wheel / suspense
-   ============================================================ */
-.decide {
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  gap: 26px;
-  /* The rotating wheel's post-transform bounding box is ~1.3x its diameter and
-     counts toward scrollable overflow — without this, narrow phones grow a
-     horizontal scrollbar mid-spin. The disc itself never paints outside. */
-  overflow: hidden;
-}
-.decide-hype {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 24px;
-}
-.wheel-wrap {
-  position: relative;
-  width: min(86vw, 340px);
-  aspect-ratio: 1;
-  --r: calc(min(86vw, 340px) / 2);
-}
-/* The resting drop shadow lives on a NON-rotating layer. On .wheel itself it
-   spins with the disc (bottom → side → top), which reads as a wobble. */
-.wheel-wrap::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  box-shadow: 0 10px 0 rgba(43, 33, 24, 0.1);
-}
-.wheel-pointer {
-  position: absolute;
-  top: -6px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 3;
-  width: 0;
-  height: 0;
-  border-left: 15px solid transparent;
-  border-right: 15px solid transparent;
-  border-top: 26px solid var(--primary);
-  filter: drop-shadow(0 2px 0 var(--primary-press));
-}
-.wheel {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  /* Only the symmetric inset ring may rotate with the disc — see .wheel-wrap::before. */
-  box-shadow: inset 0 0 0 6px #fff;
-  overflow: hidden;
-}
-.wheel-emoji {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  font-size: 24px;
-  line-height: 1;
-  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25));
-  pointer-events: none;
-}
-.wheel-hub {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: #fff;
-  z-index: 2;
-  display: grid;
-  place-items: center;
-  font-size: 26px;
-  box-shadow: 0 4px 10px -2px rgba(43, 33, 24, 0.25);
-}
-.decide-guest {
-  font-weight: 800;
-  color: var(--ink-soft);
-}
-
-/* lock-mode suspense dots */
-.suspense {
-  font-size: 40px;
-  letter-spacing: 6px;
-}
-.suspense span {
-  display: inline-block;
-  animation: dot-bounce 1.2s infinite both;
-}
-.suspense span:nth-child(2) {
-  animation-delay: 0.18s;
-}
-.suspense span:nth-child(3) {
-  animation-delay: 0.36s;
-}
-
-/* ============================================================
-   RESULT
-   ============================================================ */
-.result {
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  gap: 20px;
-  position: relative;
-}
-.result-card {
-  width: 100%;
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  padding: 28px 20px;
-  animation: result-drop 520ms var(--ease-pop) both;
-}
-.result-emoji {
-  width: 96px;
-  height: 96px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 52px;
-}
-.result-kicker {
-  font-weight: 800;
-  color: var(--ink-soft);
-  font-size: 14px;
-}
-.result-name {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: clamp(30px, 9vw, 52px);
-  line-height: 1.04;
-}
-.result-sub {
-  font-weight: 800;
-  color: var(--ink-soft);
-}
-.result-try {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: #fff3da;
-  color: #9a7b2e;
-  border-radius: var(--r-chip);
-  padding: 8px 14px;
-  font-weight: 800;
-  font-size: 14px;
-  text-decoration: none;
-}
-.result-actions {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-/* confetti */
-.confetti {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  overflow: hidden;
-  z-index: 1;
-}
-.confetti-piece {
-  position: absolute;
-  top: -16px;
-  width: 10px;
-  height: 14px;
-  border-radius: 3px;
+.animate-confetti {
   animation: confetti-fall linear forwards;
 }
 
-/* ——— Loading ——— */
-.loading {
-  flex: 1;
-  display: grid;
-  place-items: center;
-  color: var(--ink-soft);
-  font-weight: 800;
-}
-.spinner {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  border: 4px solid var(--hairline);
-  border-top-color: var(--primary);
-  animation: spin 0.8s linear infinite;
-}
-
-/* ============================================================
-   Keyframes
-   ============================================================ */
-@keyframes pop-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px) scale(0.92);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-@keyframes vote-bounce {
+@keyframes vote-bump {
   0% {
     transform: scale(1);
   }
-  45% {
+  40% {
     transform: scale(1.35);
   }
   100% {
     transform: scale(1);
   }
 }
-@keyframes float-up {
-  from {
-    opacity: 1;
-    transform: translate(-50%, 0);
-  }
-  to {
-    opacity: 0;
-    transform: translate(-50%, -26px);
-  }
-}
-@keyframes live-pulse {
-  0%,
-  100% {
-    opacity: 0.45;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-@keyframes result-drop {
-  0% {
-    opacity: 0;
-    transform: translateY(-18px) scale(0.96);
-  }
-  60% {
-    transform: translateY(4px) scale(1.02);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-@keyframes confetti-fall {
-  to {
-    transform: translateY(105vh) rotate(720deg);
-    opacity: 0.9;
-  }
-}
-@keyframes dot-bounce {
-  0%,
-  80%,
-  100% {
-    transform: translateY(0);
-    opacity: 0.4;
-  }
-  40% {
-    transform: translateY(-14px);
-    opacity: 1;
-  }
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+
+.animate-bump {
+  animation: vote-bump 260ms ease-out;
 }
 
-/* ============================================================
-   Reduced motion — swap juice for quiet fades
-   ============================================================ */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 120ms !important;
-  }
-  .option-row {
+  .animate-confetti,
+  .animate-bump {
     animation: none;
-  }
-  .live-dot::before {
-    animation: none;
-  }
-  .confetti {
-    display: none;
   }
 }

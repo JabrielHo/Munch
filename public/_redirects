@@ -1,7 +1,7 @@
 # Cloudflare Pages SPA fallback.
 # Serve index.html for every non-asset route so the Mini App's React Router
-# deep links (/tg, /r/<code>, /h/<code> — opened when the Telegram bot's button
-# launches the Mini App) resolve on a direct hit. Static assets are served
+# deep links (/tg, /p/<code>, /r/<code>, /g/<code> — opened when the Telegram bot's
+# button launches the Mini App) resolve on a direct hit. Static assets are served
 # directly; the API lives on Convex (a separate origin), so nothing here
 # shadows it.
 /*    /index.html   200

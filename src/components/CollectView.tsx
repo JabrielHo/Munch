@@ -1,12 +1,16 @@
-import { useLayoutEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useState } from "react";
 import { useAction, useMutation } from "convex/react";
+import { Lock, Plus, Sparkles } from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
-import { MAX_OPTION_LENGTH } from "../lib/identity";
-import { signedInitData } from "../lib/telegram";
-import { alertError, avatarColor } from "../lib/ui";
-import type { PublicRoom, PublicOption } from "../lib/types";
+import { MAX_OPTION_LENGTH } from "@/lib/identity";
+import { haptic, showConfirm, signedInitData } from "@/lib/telegram";
+import { alertError, avatarColor } from "@/lib/ui";
+import type { PublicRoom, PublicOption } from "@/lib/types";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Dock, EmptyNote, Screen } from "@/components/Screen";
 import { OptionRow } from "./OptionRow";
 
 interface Props {
@@ -17,6 +21,7 @@ interface Props {
   votedIds: Set<string>;
   name: string;
   token: string;
+  backTo: string;
 }
 
 export function CollectView({
@@ -27,6 +32,7 @@ export function CollectView({
   votedIds,
   name,
   token,
+  backTo,
 }: Props) {
   const addOption = useMutation(api.rooms.addOption);
   const toggleVote = useMutation(api.rooms.toggleVote);
@@ -34,30 +40,11 @@ export function CollectView({
   const miniAppHostAction = useAction(api.telegram.miniAppHostAction);
 
   const [draft, setDraft] = useState("");
-  // While the add input has focus the on-screen keyboard pushes the fixed dock
-  // up over the content, so collapse the dock to just the input row. Host
-  // controls and hints come back on blur.
-  const [isTyping, setIsTyping] = useState(false);
-
-  // The dock is fixed to the bottom, so reserve exactly its height as padding
-  // and the last option is never hidden behind it. Measured rather than
-  // hard-coded because the host's dock is taller and its labels can wrap.
-  const dockRef = useRef<HTMLDivElement>(null);
-  const [dockHeight, setDockHeight] = useState(0);
-
-  useLayoutEffect(() => {
-    const dock = dockRef.current;
-    if (!dock) return;
-    const measure = () => setDockHeight(dock.offsetHeight);
-    measure();
-    const resizeObserver = new ResizeObserver(measure);
-    resizeObserver.observe(dock);
-    return () => resizeObserver.disconnect();
-  }, []);
 
   // Hiding the controls from non-hosts is cosmetic only — the server verifies
   // the signed initData and the access token on every one of these.
   function runHostAction(act: "spin" | "lock" | "end") {
+    haptic("medium");
     miniAppHostAction({ initData: signedInitData, code: room.code, token, act }).catch(alertError);
   }
 
@@ -80,41 +67,31 @@ export function CollectView({
 
   const topOption = options[0];
   const peopleHere = presence?.names ?? [];
-  const hereCount = presence?.count ?? 0;
 
   return (
-    <div className="screen room" style={{ paddingBottom: dockHeight ? dockHeight + 16 : undefined }}>
-      <header className="room-header">
-        <div className="room-titlerow">
-          {/* Back goes up a level, to the group's round history. */}
-          <Link to={`/h/${room.code}`} className="room-back" aria-label="All rounds">
-            ←
-          </Link>
-          <h1 className="room-title">
-            <span>{room.title}</span>
-          </h1>
-          <span className="live-dot">LIVE</span>
+    <Screen
+      title={room.title}
+      subtitle={`${presence?.count ?? 0} here now`}
+      backTo={backTo}
+      badge={<Badge variant="live">live</Badge>}>
+      {peopleHere.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {peopleHere.map((person, index) => (
+            <span
+              key={`${person}-${index}`}
+              className="flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-semibold">
+              <span className="size-2 rounded-full" style={{ background: avatarColor(person) }} />
+              {person}
+            </span>
+          ))}
         </div>
-        <div className="room-subrow">
-          <span className="here-count">{hereCount} here</span>
-        </div>
-        {peopleHere.length > 0 && (
-          <div className="presence-names">
-            {peopleHere.map((person, index) => (
-              <span key={`${person}-${index}`} className="who-pill">
-                <span className="who-dot" style={{ background: avatarColor(person) }} />
-                {person}
-              </span>
-            ))}
-          </div>
-        )}
-      </header>
+      )}
 
-      {options.length === 0 ? (
-        <div className="empty">Nobody's added anything yet. Go first! 👀</div>
-      ) : (
-        <div className="options">
-          {options.map((option) => (
+      <div className="flex flex-col gap-2 pb-52">
+        {options.length === 0 ? (
+          <EmptyNote>Nobody's added anything yet. Go first 👀</EmptyNote>
+        ) : (
+          options.map((option) => (
             <OptionRow
               key={option._id}
               option={option}
@@ -123,64 +100,62 @@ export function CollectView({
               onVote={handleVote}
               onRemove={handleRemove}
             />
-          ))}
-        </div>
-      )}
-
-      <div className="dock" ref={dockRef}>
-        <div className="dock-inner">
-          <form className="add-bar" onSubmit={submitOption}>
-            <input
-              className="input"
-              aria-label="Add a place or a craving"
-              placeholder="Add a place or a craving…"
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onFocus={() => setIsTyping(true)}
-              onBlur={() => setIsTyping(false)}
-              maxLength={MAX_OPTION_LENGTH}
-            />
-            <button className="fab" type="submit" disabled={!draft.trim()} aria-label="Add option">
-              ➤
-            </button>
-          </form>
-
-          {isTyping ? null : viewerIsHost ? (
-            <>
-              <div className="host-controls">
-                <button
-                  type="button"
-                  className="btn btn--block"
-                  onClick={() => runHostAction("spin")}
-                  disabled={options.length === 0}>
-                  🎡 Spin the wheel
-                </button>
-                <button
-                  type="button"
-                  className="btn btn--ghost btn--block"
-                  onClick={() => runHostAction("lock")}
-                  disabled={options.length === 0}>
-                  🔒 Lock top pick{topOption ? `: ${topOption.text}` : ""}
-                </button>
-              </div>
-              <div className="center">
-                <button
-                  type="button"
-                  className="linklike"
-                  onClick={() => {
-                    if (confirm("Close this round for everyone?")) runHostAction("end");
-                  }}>
-                  End this round 🌙
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="guest-waiting">
-              You're in, {name}. The host calls the spin. Keep voting! 🗳️
-            </div>
-          )}
-        </div>
+          ))
+        )}
       </div>
-    </div>
+
+      <Dock>
+        <form className="flex gap-2" onSubmit={submitOption}>
+          <Input
+            aria-label="Add a place or a craving"
+            placeholder="A place, or just a craving…"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            maxLength={MAX_OPTION_LENGTH}
+          />
+          <Button type="submit" size="icon" disabled={!draft.trim()} aria-label="Add option">
+            <Plus />
+          </Button>
+        </form>
+
+        {viewerIsHost ? (
+          <>
+            <div className="grid grid-cols-2 gap-2">
+              <Button onClick={() => runHostAction("spin")} disabled={options.length === 0}>
+                <Sparkles />
+                Spin
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => runHostAction("lock")}
+                disabled={options.length === 0}>
+                <Lock />
+                Lock top pick
+              </Button>
+            </div>
+            {topOption && (
+              <p className="truncate text-center text-xs text-muted-foreground">
+                Top pick right now: <b>{topOption.text}</b>
+              </p>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              onClick={() =>
+                void showConfirm("Close this round for everyone?").then(
+                  (sure) => sure && runHostAction("end"),
+                )
+              }>
+              End this round
+            </Button>
+          </>
+        ) : (
+          <p className="pb-1 text-center text-sm text-muted-foreground">
+            You're in{name ? `, ${name}` : ""}. Keep voting — the host calls the spin 🗳️
+          </p>
+        )}
+      </Dock>
+    </Screen>
   );
 }

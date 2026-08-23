@@ -2,19 +2,20 @@ import { useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { VIEWER_NAME, rememberRoomCode } from "../lib/identity";
-import { useRoomSession } from "../lib/session";
-import { CollectView } from "../components/CollectView";
-import { DecideView } from "../components/DecideView";
-import { ClosedView } from "../components/ClosedView";
-import { LoadingScreen } from "../components/LoadingScreen";
-import { NoticeScreen } from "../components/NoticeScreen";
+import { VIEWER_NAME, rememberCode } from "@/lib/identity";
+import { useGroupSession } from "@/lib/session";
+import { CollectView } from "@/components/CollectView";
+import { DecideView } from "@/components/DecideView";
+import { ClosedView } from "@/components/ClosedView";
+import { LoadingScreen } from "@/components/LoadingScreen";
+import { NoticeScreen } from "@/components/NoticeScreen";
 
 const HEARTBEAT_MS = 1_500;
 
+/** One round of picking a place: adding, voting, and the synced reveal. */
 export default function Room() {
   const { code = "" } = useParams();
-  const session = useRoomSession(code);
+  const session = useGroupSession(code);
   const token = session.status === "ok" ? session.token : null;
 
   const roomData = useQuery(api.rooms.getRoom, token ? { code, token } : "skip");
@@ -56,18 +57,20 @@ export default function Room() {
     };
   }, [code, token, leaveRoom]);
 
-  // The anchor for a Mini App opened with no room code — see rememberRoomCode.
+  // The anchor for a Mini App opened with no code — see rememberCode.
   const roomExists = roomData != null;
   useEffect(() => {
-    if (code && roomExists) rememberRoomCode(code);
+    if (code && roomExists) rememberCode(code);
   }, [code, roomExists]);
 
   if (session.status === "denied") return <NoticeScreen message={session.message} />;
-  if (!token) return <LoadingScreen />;
-  if (roomData === undefined) return <LoadingScreen />;
+  if (!token || roomData === undefined) return <LoadingScreen />;
   if (roomData === null) return <NoticeScreen message="That round isn't here." />;
 
-  const { room, options, viewerIsHost, myVoteIds } = roomData;
+  const { room, options, viewerIsHost, myVoteIds, hangoutCode } = roomData;
+  // A round spun up by a hangout belongs to it, so back goes there rather than
+  // to the flat list of rounds.
+  const backTo = hangoutCode ? `/p/${hangoutCode}` : `/g/${room.code}`;
 
   // A decided room is closed too, but the spin animation and result reveal take
   // precedence so everyone still gets to watch the decision play out.
@@ -78,12 +81,13 @@ export default function Room() {
         room={room}
         options={options}
         viewerIsHost={viewerIsHost}
+        backTo={backTo}
       />
     );
   }
 
   if (room.closedAt) {
-    return <ClosedView room={room} options={options} />;
+    return <ClosedView room={room} options={options} backTo={backTo} />;
   }
 
   return (
@@ -95,6 +99,7 @@ export default function Room() {
       votedIds={new Set<string>(myVoteIds)}
       name={VIEWER_NAME}
       token={token}
+      backTo={backTo}
     />
   );
 }

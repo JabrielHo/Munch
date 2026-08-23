@@ -1,4 +1,4 @@
-import { MAX_NAME_LENGTH, MAX_OPTION_LENGTH, tidyText } from "../../convex/lib";
+import { MAX_NAME_LENGTH, MAX_OPTION_LENGTH, MAX_PLACE_LENGTH, tidyText } from "../../convex/lib";
 import { isTelegram, telegramUser, telegramDisplayName } from "./telegram";
 
 /**
@@ -10,19 +10,19 @@ import { isTelegram, telegramUser, telegramDisplayName } from "./telegram";
 const NAME_KEY = "munch.name";
 const LAST_CODE_KEY = "munch.lastCode";
 
-/** The anchor that lets a Mini App opened without a room code — from the bot
- *  profile, say — land on that group's All rounds page instead of a dead end. */
-export function rememberRoomCode(code: string) {
+/** The anchor that lets a Mini App opened with no code — from the bot profile,
+ *  say — land on that group's plans instead of a dead end. */
+export function rememberCode(code: string) {
   localStorage.setItem(LAST_CODE_KEY, code);
 }
 
-export function lastRoomCode(): string | null {
+export function lastCode(): string | null {
   return localStorage.getItem(LAST_CODE_KEY);
 }
 
-// Re-exported straight from the server module so the add bar's maxLength can
-// never drift from what the mutations actually enforce.
-export { MAX_OPTION_LENGTH };
+// Re-exported straight from the server module so an input's maxLength can never
+// drift from what the mutations actually enforce.
+export { MAX_OPTION_LENGTH, MAX_PLACE_LENGTH };
 
 /** For local greetings only. Inside Telegram this is always set, since Telegram
  *  requires a first name; the localStorage fallback covers browser dev. */

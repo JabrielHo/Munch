@@ -31,4 +31,11 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Vendored shadcn/ui primitives. They re-export Radix parts alongside the
+    // styled components, which the fast-refresh rule flags and which is exactly
+    // the shape `npx shadcn add` will keep writing.
+    files: ["src/components/ui/**/*.tsx"],
+    rules: { "react-refresh/only-export-components": "off" },
+  },
 );
