@@ -145,28 +145,6 @@
   a {
     -webkit-tap-highlight-color: transparent;
   }
-
-  /* The button the browser puts inside a date or time input. Every engine draws
-     it differently — desktop Chrome a calendar, Android Chrome a dropdown arrow,
-     iOS Safari nothing — so the same field ends up looking like three different
-     controls. It goes, and DateTimeInput draws one icon that is the same
-     everywhere, opening the picker through showPicker().
-
-     Reserving the room that icon needs happens in the Input component, since a
-     `px-*` utility outranks anything this layer sets. */
-
-  input[type="date"]::-webkit-calendar-picker-indicator,
-  input[type="time"]::-webkit-calendar-picker-indicator {
-    display: none;
-  }
-
-  /* Firefox has no such button and draws its own icon, so ours would be a
-     duplicate. -moz-appearance is recognised there and nowhere else. */
-  @supports (-moz-appearance: none) {
-    .native-picker-icon {
-      display: none;
-    }
-  }
 }
 
 @layer utilities {

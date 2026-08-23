@@ -13,11 +13,6 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
         "placeholder:text-muted-foreground",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:border-ring",
         "disabled:cursor-not-allowed disabled:opacity-50",
-        // Chrome puts its own calendar or clock button inside these two, which
-        // index.css pins to the trailing edge. This is the room it sits in — it
-        // lives here rather than in that stylesheet because a utility class
-        // outranks the base layer.
-        (type === "date" || type === "time") && "pr-10",
         className,
       )}
       {...props}

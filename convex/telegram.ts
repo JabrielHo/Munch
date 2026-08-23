@@ -38,6 +38,13 @@ import { formatDate, formatDay, formatTime, TZ_LABEL } from "./time";
  *
  * Updates arrive on the /telegram route in http.ts, which checks the webhook
  * secret and hands the raw update to handleUpdate at the bottom of this file.
+ *
+ * A new message is the only thing here that makes a phone buzz, so they are
+ * rationed: a hangout is worth two of them across its whole life, the card and
+ * the reminder on the day, plus one more if it is called off after people have
+ * replied. Everything else — RSVPs landing, details changing, a place being
+ * decided — is an edit to the card that already exists. Before adding a
+ * sendMessage anywhere, check whether an edit would carry the same news.
  */
 
 // —— Telegram wire types (only the fields we read) ——
@@ -838,10 +845,27 @@ async function postHangoutCard(
     messageId: sent.message_id,
   });
   if (previousMessageId !== undefined && previousMessageId !== sent.message_id) {
+    await removeSupersededMessage(
+      state.hangout.tgChatId,
+      previousMessageId,
+      "⬇️ This hangout moved to a newer message below.",
+    );
+  }
+}
+
+/** Clears a card the bot has just replaced. Deleting leaves the chat clean,
+ *  but Telegram only allows it for the bot's own messages under 48 hours old,
+ *  so anything older is edited down to a single pointer line instead. */
+async function removeSupersededMessage(chatId: number, messageId: number, fallbackText: string) {
+  const deleted = await callTelegram("deleteMessage", {
+    chat_id: chatId,
+    message_id: messageId,
+  });
+  if (deleted === null) {
     await callTelegram("editMessageText", {
-      chat_id: state.hangout.tgChatId,
-      message_id: previousMessageId,
-      text: "⬇️ This hangout moved to a newer message below.",
+      chat_id: chatId,
+      message_id: messageId,
+      text: fallbackText,
     });
   }
 }
@@ -899,17 +923,28 @@ export const sendHangoutReminder = internalAction({
   },
 });
 
-/** Publishing from the Mini App: flip the draft, then put the live card at the
- *  bottom of the chat. The token is what proves both identity and membership;
- *  the signed initData is a second, independent check on the same claim. */
+/**
+ * Publishing from the Mini App. A draft the host filled in there and then turns
+ * into the live card in place: the group saw /hangout land seconds ago and the
+ * card is still on screen, so posting a second one would buzz every phone to
+ * say something they are already looking at. Only a draft left to go stale, or
+ * an open hangout the host is deliberately bumping, gets a fresh message.
+ *
+ * The token proves both identity and membership; the signed initData is a
+ * second, independent check on the same claim.
+ */
 export const publishHangout = action({
   args: { initData: v.string(), code: v.string(), token: v.string() },
   handler: async (ctx, { initData, code, token }) => {
     await verifyInitData(initData);
-    const { hangoutId, previousMessageId } = await ctx.runMutation(
+    const { hangoutId, previousMessageId, bumpCard } = await ctx.runMutation(
       internal.hangouts.markPublished,
       { code, token },
     );
+    if (!bumpCard && previousMessageId !== undefined) {
+      await editHangoutCard(ctx, hangoutId);
+      return;
+    }
     await postHangoutCard(ctx, hangoutId, previousMessageId);
   },
 });
@@ -1035,7 +1070,14 @@ async function startRound(ctx: ActionCtx, chat: TgChat, from: TgUser, title: str
     hostName: displayName(from),
     ...(title ? { title } : {}),
   });
-  // Always (re)post, so the scoreboard is the newest thing in the chat.
+  // A /munch race merges into one round, and that round's scoreboard is a few
+  // seconds up the chat already. Refreshing it says everything a second copy
+  // would, without the notification.
+  if (round.reusedMessageId !== undefined) {
+    await refreshScoreboard(ctx, round.roomId);
+    return;
+  }
+
   const state = await ctx.runQuery(internal.telegram.sessionState, { roomId: round.roomId });
   if (!state) return;
   const { text, reply_markup } = renderScoreboard(state);
@@ -1052,15 +1094,6 @@ async function startRound(ctx: ActionCtx, chat: TgChat, from: TgUser, title: str
     roomId: round.roomId,
     messageId: sent.message_id,
   });
-  // Point the superseded copy at the new one, so a duplicate scoreboard doesn't
-  // linger further up the chat.
-  if (round.reusedMessageId && round.reusedMessageId !== sent.message_id) {
-    await callTelegram("editMessageText", {
-      chat_id: chat.id,
-      message_id: round.reusedMessageId,
-      text: "⬇️ This munch moved to a newer message below.",
-    });
-  }
 }
 
 async function onMessage(ctx: ActionCtx, message: TgMessage) {

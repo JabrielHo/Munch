@@ -30,6 +30,14 @@ import { epochToWhen, isValidWhen, reminderTimeFor, whenToEpoch, type LocalWhen 
  */
 
 const CARD_REFRESH_DEBOUNCE_MS = 2000;
+/**
+ * How long a draft can sit before publishing it posts a fresh card instead of
+ * editing the one already there. Inside this window the group watched /hangout
+ * land moments ago and the card is still in view, so a second message would be
+ * pure noise; past it the draft has scrolled away and the plan deserves to be
+ * seen.
+ */
+const FRESH_DRAFT_MS = 5 * 60 * 1000;
 const MAX_FEED_HANGOUTS = 40;
 /** How long a hangout that has already started keeps showing up as upcoming. */
 const RECENTLY_STARTED_MS = 6 * 60 * 60 * 1000;
@@ -451,21 +459,26 @@ export const saveDetails = mutation({
   },
 });
 
-/** Publishing is the moment the plan becomes everyone's. telegram.ts posts the
- *  fresh card straight after, so the chat actually gets a notification. */
+/** Publishing is the moment the plan becomes everyone's. */
 export const markPublished = internalMutation({
   args: { code: v.string(), token: v.string() },
   handler: async (ctx, { code, token }) => {
     const { hangout } = await requireHost(ctx, code, token);
     if (hangout.startsAt === undefined) throw new ConvexError("Set a day and a time first.");
-    if (hangout.status === "draft") {
+    const wasDraft = hangout.status === "draft";
+    if (wasDraft) {
       await ctx.db.patch(hangout._id, { status: "open" });
     }
     const published = (await ctx.db.get(hangout._id))!;
     await rescheduleReminder(ctx, published);
-    // Re-publishing an open hangout is how the host bumps it back down a busy
-    // chat, so the old card is always superseded rather than left in place.
-    return { hangoutId: hangout._id, previousMessageId: hangout.tgMessageId };
+    return {
+      hangoutId: hangout._id,
+      previousMessageId: hangout.tgMessageId,
+      // A draft filled in there and then just becomes the live card where it
+      // stands. A stale draft has scrolled away, and re-publishing an open
+      // hangout is the host deliberately bumping it, so both post afresh.
+      bumpCard: !wasDraft || Date.now() - hangout.createdAt > FRESH_DRAFT_MS,
+    };
   },
 });
 
@@ -480,6 +493,12 @@ export const markCancelled = internalMutation({
       const room = await ctx.db.get(hangout.roomId);
       if (room && !room.closedAt) await ctx.db.patch(room._id, { closedAt: Date.now() });
     }
-    return { hangoutId: hangout._id, announce: hangout.status === "open" };
+    // Calling off a plan nobody ever answered is not worth interrupting the
+    // group over — the card says it, and that is enough.
+    const replies = await rsvpsFor(ctx, hangout._id);
+    return {
+      hangoutId: hangout._id,
+      announce: hangout.status === "open" && replies.length > 0,
+    };
   },
 });

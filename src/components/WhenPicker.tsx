@@ -61,7 +61,7 @@ export function WhenPicker({
           type="date"
           value={value.date}
           min={quickDates[0]}
-          onChange={(event) => onChange({ ...value, date: event.target.value })}
+          onChange={(date) => onChange({ ...value, date })}
           className={isCustomDate ? "border-primary" : undefined}
         />
       </div>
@@ -84,7 +84,7 @@ export function WhenPicker({
           id="hangout-time"
           type="time"
           value={value.time}
-          onChange={(event) => onChange({ ...value, time: event.target.value })}
+          onChange={(time) => onChange({ ...value, time })}
         />
       </div>
     </div>
