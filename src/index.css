@@ -146,33 +146,26 @@
     -webkit-tap-highlight-color: transparent;
   }
 
-  /* The calendar and clock buttons Chrome puts inside date and time inputs.
-     Left alone they sit tight against the value with the rest of the field
-     empty, which reads as a mistake next to every other trailing control in the
-     app. Chrome ignores margin-left:auto here, so the indicator is pulled out of
-     flow and pinned instead. Reserving room for it has to happen in the Input
-     component, since a `px-*` utility outranks anything this layer sets. */
-  input[type="date"],
-  input[type="time"] {
-    position: relative;
-  }
+  /* The button the browser puts inside a date or time input. Every engine draws
+     it differently — desktop Chrome a calendar, Android Chrome a dropdown arrow,
+     iOS Safari nothing — so the same field ends up looking like three different
+     controls. It goes, and DateTimeInput draws one icon that is the same
+     everywhere, opening the picker through showPicker().
+
+     Reserving the room that icon needs happens in the Input component, since a
+     `px-*` utility outranks anything this layer sets. */
 
   input[type="date"]::-webkit-calendar-picker-indicator,
   input[type="time"]::-webkit-calendar-picker-indicator {
-    position: absolute;
-    right: 0.5rem;
-    top: 50%;
-    transform: translateY(-50%);
-    padding: 0.375rem;
-    border-radius: var(--radius-sm);
-    opacity: 0.65;
-    cursor: pointer;
+    display: none;
   }
 
-  input[type="date"]::-webkit-calendar-picker-indicator:hover,
-  input[type="time"]::-webkit-calendar-picker-indicator:hover {
-    opacity: 1;
-    background-color: var(--muted);
+  /* Firefox has no such button and draws its own icon, so ours would be a
+     duplicate. -moz-appearance is recognised there and nowhere else. */
+  @supports (-moz-appearance: none) {
+    .native-picker-icon {
+      display: none;
+    }
   }
 }
 

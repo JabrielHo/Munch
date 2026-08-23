@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { DateTimeInput } from "@/components/DateTimeInput";
 import { epochToWhen, formatDay, whenToEpoch, type LocalWhen } from "../../convex/time";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -56,7 +56,7 @@ export function WhenPicker({
             </Button>
           ))}
         </div>
-        <Input
+        <DateTimeInput
           id="hangout-date"
           type="date"
           value={value.date}
@@ -80,7 +80,7 @@ export function WhenPicker({
             </Button>
           ))}
         </div>
-        <Input
+        <DateTimeInput
           id="hangout-time"
           type="time"
           value={value.time}
