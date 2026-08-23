@@ -10,6 +10,12 @@
    the brand, and they survive the jump from "where do we eat" to "when are we
    meeting". Only the neutrals flip with the theme. */
 :root {
+  /* Chrome draws date and time inputs itself, glyph and popup alike, and picks
+     the palette from this. Without it the picker icon is a dark shape on our
+     dark field and the calendar popup opens white. */
+  color-scheme: light;
+  accent-color: #ff5a3c;
+
   --radius: 1rem;
 
   --background: #fff7ec;
@@ -42,6 +48,9 @@
 }
 
 .dark {
+  color-scheme: dark;
+  accent-color: #ff6b4f;
+
   --background: #17110d;
   --foreground: #f7efe6;
   --card: #211811;
@@ -135,6 +144,35 @@
   button,
   a {
     -webkit-tap-highlight-color: transparent;
+  }
+
+  /* The calendar and clock buttons Chrome puts inside date and time inputs.
+     Left alone they sit tight against the value with the rest of the field
+     empty, which reads as a mistake next to every other trailing control in the
+     app. Chrome ignores margin-left:auto here, so the indicator is pulled out of
+     flow and pinned instead. Reserving room for it has to happen in the Input
+     component, since a `px-*` utility outranks anything this layer sets. */
+  input[type="date"],
+  input[type="time"] {
+    position: relative;
+  }
+
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="time"]::-webkit-calendar-picker-indicator {
+    position: absolute;
+    right: 0.5rem;
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 0.375rem;
+    border-radius: var(--radius-sm);
+    opacity: 0.65;
+    cursor: pointer;
+  }
+
+  input[type="date"]::-webkit-calendar-picker-indicator:hover,
+  input[type="time"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+    background-color: var(--muted);
   }
 }
 
