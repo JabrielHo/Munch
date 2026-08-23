@@ -1,0 +1,18 @@
+# Cloudflare Pages response headers.
+#
+# Telegram's webview caches aggressively, and a stale index.html is the classic
+# Mini App blank screen: the old shell survives a deploy, asks for the asset
+# filenames it remembers, and gets 404s for every one of them because the new
+# build hashed them differently. Nothing renders and there is no console to
+# check. So the shell is always revalidated.
+/
+  Cache-Control: no-cache
+/index.html
+  Cache-Control: no-cache
+/tg
+  Cache-Control: no-cache
+
+# Everything under /assets carries a content hash in its filename, so a given
+# URL's bytes never change and it can be kept for good.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
